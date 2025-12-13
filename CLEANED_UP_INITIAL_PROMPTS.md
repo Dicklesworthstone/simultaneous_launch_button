@@ -11,7 +11,7 @@ This is a transcript of the Claude Code session where the SLB project was concei
 
 ╭─── Claude Code v2.0.69 ───────────────────────────────────────────────────────────────────────────────────────────╮
 │                                               │ Tips for getting started                                          │
-│              Welcome back Gracie!             │ Run /init to create a CLAUDE.md file with instructions for Claude │
+│              Welcome back Jeff!               │ Run /init to create a CLAUDE.md file with instructions for Claude │
 │                                               │ ───────────────────────────────────────────────────────────────── │
 │                  * ▐▛███▜▌ *                  │ Recent activity                                                   │
 │                 * ▝▜█████▛▘ *                 │ No recent activity                                                │
