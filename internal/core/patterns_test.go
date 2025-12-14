@@ -1,0 +1,374 @@
+// Package core tests pattern matching.
+package core
+
+import (
+	"testing"
+)
+
+func TestClassifyCommand(t *testing.T) {
+	engine := NewPatternEngine()
+
+	tests := []struct {
+		name              string
+		cmd               string
+		wantTier          RiskTier
+		wantApprovals     int
+		wantNeedsApproval bool
+	}{
+		// Critical commands
+		{
+			name:              "rm -rf root",
+			cmd:               "rm -rf /etc",
+			wantTier:          RiskTierCritical,
+			wantApprovals:     2,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "DROP DATABASE",
+			cmd:               "psql -c 'DROP DATABASE mydb'",
+			wantTier:          RiskTierCritical,
+			wantApprovals:     2,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "terraform destroy",
+			cmd:               "terraform destroy",
+			wantTier:          RiskTierCritical,
+			wantApprovals:     2,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "kubectl delete node",
+			cmd:               "kubectl delete node worker-1",
+			wantTier:          RiskTierCritical,
+			wantApprovals:     2,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "git push --force",
+			cmd:               "git push --force origin main",
+			wantTier:          RiskTierCritical,
+			wantApprovals:     2,
+			wantNeedsApproval: true,
+		},
+		// Dangerous commands
+		{
+			name:              "rm -rf local",
+			cmd:               "rm -rf ./build",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "git reset --hard",
+			cmd:               "git reset --hard HEAD~3",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "git clean -fd",
+			cmd:               "git clean -fd",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "kubectl delete pod",
+			cmd:               "kubectl delete deployment nginx",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "docker rm",
+			cmd:               "docker rm container1",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		// Caution commands
+		{
+			name:              "git stash drop",
+			cmd:               "git stash drop",
+			wantTier:          RiskTierCaution,
+			wantApprovals:     0,
+			wantNeedsApproval: true,
+		},
+		{
+			name:              "npm uninstall",
+			cmd:               "npm uninstall lodash",
+			wantTier:          RiskTierCaution,
+			wantApprovals:     0,
+			wantNeedsApproval: true,
+		},
+		// Safe commands (no approval needed)
+		{
+			name:              "git status",
+			cmd:               "git status",
+			wantTier:          "",
+			wantApprovals:     0,
+			wantNeedsApproval: false,
+		},
+		{
+			name:              "ls",
+			cmd:               "ls -la",
+			wantTier:          "",
+			wantApprovals:     0,
+			wantNeedsApproval: false,
+		},
+		{
+			name:              "cat file",
+			cmd:               "cat README.md",
+			wantTier:          "",
+			wantApprovals:     0,
+			wantNeedsApproval: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := engine.ClassifyCommand(tt.cmd, "")
+
+			if result.Tier != tt.wantTier {
+				t.Errorf("Tier = %q, want %q", result.Tier, tt.wantTier)
+			}
+			if result.MinApprovals != tt.wantApprovals {
+				t.Errorf("MinApprovals = %d, want %d", result.MinApprovals, tt.wantApprovals)
+			}
+			if result.NeedsApproval != tt.wantNeedsApproval {
+				t.Errorf("NeedsApproval = %v, want %v", result.NeedsApproval, tt.wantNeedsApproval)
+			}
+		})
+	}
+}
+
+func TestNormalizeCommand(t *testing.T) {
+	tests := []struct {
+		name            string
+		cmd             string
+		wantPrimary     string
+		wantCompound    bool
+		wantStrippedLen int
+	}{
+		{
+			name:         "simple command",
+			cmd:          "ls -la",
+			wantPrimary:  "ls -la",
+			wantCompound: false,
+		},
+		{
+			name:            "sudo wrapper",
+			cmd:             "sudo rm -rf /tmp",
+			wantPrimary:     "rm -rf /tmp",
+			wantStrippedLen: 1,
+		},
+		{
+			name:            "multiple wrappers",
+			cmd:             "sudo env rm -rf /tmp",
+			wantPrimary:     "rm -rf /tmp",
+			wantStrippedLen: 2, // sudo, env
+		},
+		{
+			name:         "compound with semicolon",
+			cmd:          "cd /tmp; rm -rf .",
+			wantCompound: true,
+		},
+		{
+			name:         "compound with &&",
+			cmd:          "make build && make test",
+			wantCompound: true,
+		},
+		{
+			name:         "compound with pipe",
+			cmd:          "ps aux | grep nginx",
+			wantCompound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NormalizeCommand(tt.cmd)
+
+			if tt.wantPrimary != "" && result.Primary != tt.wantPrimary {
+				t.Errorf("Primary = %q, want %q", result.Primary, tt.wantPrimary)
+			}
+			if result.IsCompound != tt.wantCompound {
+				t.Errorf("IsCompound = %v, want %v", result.IsCompound, tt.wantCompound)
+			}
+			if tt.wantStrippedLen > 0 && len(result.StrippedWrappers) != tt.wantStrippedLen {
+				t.Errorf("StrippedWrappers len = %d, want %d (got: %v)",
+					len(result.StrippedWrappers), tt.wantStrippedLen, result.StrippedWrappers)
+			}
+		})
+	}
+}
+
+func TestCompoundCommandClassification(t *testing.T) {
+	engine := NewPatternEngine()
+
+	// Compound command with highest tier being critical
+	result := engine.ClassifyCommand("ls && rm -rf /etc", "")
+	if result.Tier != RiskTierCritical {
+		t.Errorf("Expected critical for compound with rm -rf /etc, got %s", result.Tier)
+	}
+
+	// Compound command with highest tier being dangerous
+	result = engine.ClassifyCommand("cd /tmp && rm -rf ./build", "")
+	if result.Tier != RiskTierDangerous {
+		t.Errorf("Expected dangerous for compound with rm -rf ./build, got %s", result.Tier)
+	}
+}
+
+func TestCompoundCommandSafePrecedence(t *testing.T) {
+	engine := NewPatternEngine()
+
+	// SAFE patterns should still take precedence for individual segments in compound commands.
+	res := engine.ClassifyCommand("echo ok && kubectl delete pod nginx-123", "")
+	if res.Tier != RiskTier(RiskSafe) || res.NeedsApproval || !res.IsSafe {
+		t.Fatalf("Tier=%q NeedsApproval=%v IsSafe=%v, want safe/false/true", res.Tier, res.NeedsApproval, res.IsSafe)
+	}
+}
+
+func TestSudoStripping(t *testing.T) {
+	engine := NewPatternEngine()
+
+	// sudo should be stripped and still match dangerous pattern
+	result := engine.ClassifyCommand("sudo rm -rf ./build", "")
+	if result.Tier != RiskTierDangerous {
+		t.Errorf("Expected dangerous for 'sudo rm -rf', got %s", result.Tier)
+	}
+	if !result.NeedsApproval {
+		t.Error("Expected NeedsApproval to be true")
+	}
+}
+
+func TestCaseInsensitivity(t *testing.T) {
+	engine := NewPatternEngine()
+
+	// SQL keywords are case-insensitive
+	result := engine.ClassifyCommand("drop database mydb", "")
+	if result.Tier != RiskTierCritical {
+		t.Errorf("Expected critical for 'drop database', got %s", result.Tier)
+	}
+
+	result = engine.ClassifyCommand("DROP DATABASE mydb", "")
+	if result.Tier != RiskTierCritical {
+		t.Errorf("Expected critical for 'DROP DATABASE', got %s", result.Tier)
+	}
+}
+
+func TestSafePatternsAndPrecedence(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("git stash is SAFE but git stash drop is CAUTION", func(t *testing.T) {
+		safe := engine.ClassifyCommand("git stash", "")
+		if safe.Tier != RiskTier(RiskSafe) || safe.NeedsApproval || !safe.IsSafe {
+			t.Fatalf("git stash: Tier=%q NeedsApproval=%v IsSafe=%v", safe.Tier, safe.NeedsApproval, safe.IsSafe)
+		}
+
+		drop := engine.ClassifyCommand("git stash drop", "")
+		if drop.Tier != RiskTierCaution || !drop.NeedsApproval || drop.IsSafe {
+			t.Fatalf("git stash drop: Tier=%q NeedsApproval=%v IsSafe=%v", drop.Tier, drop.NeedsApproval, drop.IsSafe)
+		}
+	})
+
+	t.Run("kubectl delete pod is SAFE (overrides kubectl delete)", func(t *testing.T) {
+		res := engine.ClassifyCommand("kubectl delete pod nginx-123", "")
+		if res.Tier != RiskTier(RiskSafe) || res.NeedsApproval || !res.IsSafe {
+			t.Fatalf("kubectl delete pod: Tier=%q NeedsApproval=%v IsSafe=%v", res.Tier, res.NeedsApproval, res.IsSafe)
+		}
+	})
+
+	t.Run("npm cache clean is SAFE", func(t *testing.T) {
+		res := engine.ClassifyCommand("npm cache clean", "")
+		if res.Tier != RiskTier(RiskSafe) || res.NeedsApproval || !res.IsSafe {
+			t.Fatalf("npm cache clean: Tier=%q NeedsApproval=%v IsSafe=%v", res.Tier, res.NeedsApproval, res.IsSafe)
+		}
+	})
+
+	t.Run("rm *.log/tmp/bak is SAFE", func(t *testing.T) {
+		for _, cmd := range []string{"rm app.log", "rm app.tmp", "rm app.bak"} {
+			res := engine.ClassifyCommand(cmd, "")
+			if res.Tier != RiskTier(RiskSafe) || res.NeedsApproval || !res.IsSafe {
+				t.Fatalf("%s: Tier=%q NeedsApproval=%v IsSafe=%v", cmd, res.Tier, res.NeedsApproval, res.IsSafe)
+			}
+		}
+	})
+}
+
+func TestGitPushForceWithLeaseIsDangerous(t *testing.T) {
+	engine := NewPatternEngine()
+
+	res := engine.ClassifyCommand("git push --force-with-lease origin main", "")
+	if res.Tier != RiskTierDangerous {
+		t.Fatalf("Tier = %q, want %q", res.Tier, RiskTierDangerous)
+	}
+	if res.MinApprovals != 1 || !res.NeedsApproval {
+		t.Fatalf("MinApprovals=%d NeedsApproval=%v, want 1/true", res.MinApprovals, res.NeedsApproval)
+	}
+}
+
+func TestSQLDeleteWhereVsNoWhere(t *testing.T) {
+	engine := NewPatternEngine()
+
+	noWhere := engine.ClassifyCommand(`psql -c "DELETE FROM users;"`, "")
+	if noWhere.Tier != RiskTierCritical {
+		t.Fatalf("DELETE without WHERE Tier = %q, want %q", noWhere.Tier, RiskTierCritical)
+	}
+
+	withWhere := engine.ClassifyCommand(`psql -c "DELETE FROM users WHERE id=1;"`, "")
+	if withWhere.Tier != RiskTierDangerous {
+		t.Fatalf("DELETE with WHERE Tier = %q, want %q", withWhere.Tier, RiskTierDangerous)
+	}
+}
+
+func TestParseErrorUpgradesTierConservatively(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("no match + parse error defaults to CAUTION", func(t *testing.T) {
+		// Unterminated quote triggers shellwords parse error.
+		res := engine.ClassifyCommand(`echo "unterminated`, "")
+		if !res.ParseError {
+			t.Fatalf("expected ParseError=true")
+		}
+		if res.Tier != RiskTierCaution || !res.NeedsApproval || res.IsSafe {
+			t.Fatalf("Tier=%q NeedsApproval=%v IsSafe=%v, want caution/true/false", res.Tier, res.NeedsApproval, res.IsSafe)
+		}
+		if res.MatchedPattern != "parse_error" {
+			t.Fatalf("MatchedPattern=%q, want %q", res.MatchedPattern, "parse_error")
+		}
+	})
+
+	t.Run("SAFE match + parse error upgrades to CAUTION", func(t *testing.T) {
+		res := engine.ClassifyCommand(`git stash "unterminated`, "")
+		if !res.ParseError {
+			t.Fatalf("expected ParseError=true")
+		}
+		if res.Tier != RiskTierCaution || !res.NeedsApproval || res.IsSafe {
+			t.Fatalf("Tier=%q NeedsApproval=%v IsSafe=%v, want caution/true/false", res.Tier, res.NeedsApproval, res.IsSafe)
+		}
+	})
+}
+
+func TestCompoundCommandMatchedSegments(t *testing.T) {
+	engine := NewPatternEngine()
+
+	res := engine.ClassifyCommand("git status && rm -rf ./build", "")
+	if res.Tier != RiskTierDangerous {
+		t.Fatalf("Tier = %q, want %q", res.Tier, RiskTierDangerous)
+	}
+	if len(res.MatchedSegments) == 0 {
+		t.Fatalf("expected MatchedSegments to be populated for compound command")
+	}
+	found := false
+	for _, seg := range res.MatchedSegments {
+		if seg.Tier == RiskTierDangerous {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected at least one dangerous segment match, got: %+v", res.MatchedSegments)
+	}
+}
