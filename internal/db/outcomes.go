@@ -287,16 +287,19 @@ type TimeToApprovalStats struct {
 }
 
 // GetTimeToApprovalStats returns statistics about how long it takes for requests to get approved.
+// Uses the first approval review's timestamp as the "approved at" time.
 func (db *DB) GetTimeToApprovalStats() (*TimeToApprovalStats, error) {
 	stats := &TimeToApprovalStats{}
 
-	// Get all approval times
+	// Get all approval times by looking at when the first approval review was created
 	rows, err := db.Query(`
 		SELECT
-			(julianday(resolved_at) - julianday(created_at)) * 24 * 60 as minutes
-		FROM requests
-		WHERE status IN ('approved', 'executing', 'executed', 'execution_failed')
-		AND resolved_at IS NOT NULL
+			(julianday(MIN(rv.created_at)) - julianday(r.created_at)) * 24 * 60 as minutes
+		FROM requests r
+		JOIN reviews rv ON rv.request_id = r.id AND rv.decision = 'approve'
+		WHERE r.status IN ('approved', 'executing', 'executed', 'execution_failed')
+		GROUP BY r.id
+		HAVING minutes IS NOT NULL
 		ORDER BY minutes
 	`)
 	if err != nil {
