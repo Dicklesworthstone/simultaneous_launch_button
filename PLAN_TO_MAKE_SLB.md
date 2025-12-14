@@ -2,6 +2,15 @@
 
 ## Simultaneous Launch Button (slb) — Multi-Agent Command Authorization System
 
+**Document Version**: 2.0.0 (2025-12-13)
+
+### Revision History
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 2.0.0 | 2025-12-13 | Major revision incorporating feedback from Gemini 3 Deep-Think, GPT 5.2 Pro, and Claude Opus 4.5. Key changes: atomic `slb run` command, client-side execution, command hash binding, dynamic quorum, rate limiting, sensitive data redaction, improved SQL patterns, snake_case JSON contract. |
+| 1.0.0 | 2025-12-12 | Initial design document |
+
 ---
 
 ## Executive Summary
@@ -231,9 +240,10 @@ patterns = [
 
 When reviewers disagree (one approves, one rejects):
 
-- Default: First response wins (for speed)
-- Configurable: Require N approvals with 0 rejections
-- Configurable: Human breaks ties
+- Default: **Any rejection blocks** (safety priority)
+- Configurable: First response wins (speed priority)
+- Configurable: Require **N approvals** with **0 rejections**
+- Configurable: Human breaks ties (explicit escalation path)
 - Always: Log the disagreement for audit
 
 ---
@@ -342,7 +352,7 @@ slb/
 │   ├── daemon/
 │   │   ├── daemon.go               # Daemon lifecycle management
 │   │   ├── watcher.go              # fsnotify-based file watcher
-│   │   ├── executor.go             # Command execution with capture
+│   │   ├── verifier.go             # Verifies approvals & signatures (notary)
 │   │   ├── ipc.go                  # Unix socket server
 │   │   └── notifications.go        # Desktop notifications
 │   │
@@ -442,35 +452,54 @@ slb/
 └── README.md
 ```
 
+### Storage Model (Single Source of Truth)
+
+To avoid "split brain" between JSON files and SQLite, slb has a clear data ownership model:
+
+- **Authoritative state** for a project lives in **`.slb/state.db`** (SQLite, WAL mode)
+  - Requests, reviews, sessions, pattern changes, and execution outcomes are written here
+  - This is the coordination source of truth for all agents
+- **`.slb/pending/` and `.slb/processed/` are materialized JSON snapshots**, generated from the DB:
+  - They exist for **file watching**, **human inspection**, and **interop** (agents that prefer files)
+  - They are **rebuildable**; deleting them does not lose history
+  - Regenerated on every state change (write-through cache)
+- **User-level `~/.slb/` stores are optional replicas** (cross-project search, personal audit)
+  - Written by the daemon as a "replica," not as the coordination source of truth
+  - Used for analytics, cross-project queries, and personal audit trails
+
 ### State Directories
 
 **Project-level** (`.slb/` in project root):
 ```
 .slb/
-├── pending/                    # Active pending requests
+├── state.db                    # Authoritative SQLite DB for THIS project (WAL mode)
+├── logs/                       # Execution output logs (not in DB)
+│   └── req-<uuid>.log
+├── pending/                    # Materialized JSON snapshots (rebuildable from DB)
 │   └── req-<uuid>.json
-├── sessions/                   # Active agent sessions
+├── sessions/                   # Active agent sessions (materialized)
 │   └── <agent-name>.json
 ├── rollback/                   # Captured state for rollback
 │   └── req-<uuid>/
 │       └── <captured-files>
-├── processed/                  # Recently processed (for local review)
+├── processed/                  # Recently processed (materialized, for local review)
 │   └── <date>/
 │       └── req-<uuid>.json
 └── config.toml                 # Project-specific config overrides
 ```
 
-**User-level** (`~/.slb/`):
+**User-level** (`~/.slb/`) — Optional replicas for cross-project features:
 ```
 ~/.slb/
 ├── config.toml                 # User configuration
-├── history.db                  # SQLite database
-├── history_git/                # Git repository for audit trail
+├── history.db                  # Optional: cross-project index/analytics (replica)
+├── history_git/                # Optional: personal audit trail git repo (replica)
 │   ├── .git/
 │   └── requests/
 │       └── <year>/
 │           └── <month>/
 │               └── req-<uuid>.md
+├── daemon.log                  # Daemon log file
 └── sessions/                   # Cross-project session info
 ```
 
@@ -491,15 +520,32 @@ CREATE TABLE sessions (
   session_key TEXT NOT NULL,        -- HMAC key for signing
   started_at TEXT NOT NULL,         -- ISO 8601
   last_active_at TEXT NOT NULL,
-  ended_at TEXT,                    -- NULL if still active
-  UNIQUE(agent_name, project_path, ended_at)
+  ended_at TEXT                     -- NULL if still active
 );
+
+-- Enforce: at most one ACTIVE (ended_at IS NULL) session per agent_name+project
+-- NOTE: SQLite NULLs don't collide in UNIQUE, so we need a partial index
+CREATE UNIQUE INDEX idx_sessions_one_active
+  ON sessions(agent_name, project_path)
+  WHERE ended_at IS NULL;
+
+CREATE INDEX idx_sessions_last_active
+  ON sessions(project_path, last_active_at DESC);
 
 -- Command requests
 CREATE TABLE requests (
   id TEXT PRIMARY KEY,              -- UUID
   project_path TEXT NOT NULL,
-  command TEXT NOT NULL,
+
+  -- Command specification (structured for reproducibility)
+  command_raw TEXT NOT NULL,        -- Exactly what the agent requested
+  command_argv TEXT,                -- JSON array (preferred execution form)
+  command_cwd TEXT NOT NULL,        -- Working directory at request time
+  command_shell INTEGER NOT NULL DEFAULT 0, -- 1 if shell parsing/execution required
+  command_hash TEXT NOT NULL,       -- sha256(raw + "\n" + cwd + "\n" + argv_json + "\n" + shell)
+  command_display TEXT,             -- Redacted version for display (NULL if no redaction)
+  contains_sensitive INTEGER NOT NULL DEFAULT 0,
+
   risk_tier TEXT NOT NULL,          -- 'critical', 'dangerous', 'caution'
 
   -- Requestor info
@@ -509,9 +555,9 @@ CREATE TABLE requests (
 
   -- Justification (structured)
   reason TEXT NOT NULL,             -- Why run this command?
-  expected_effect TEXT NOT NULL,    -- What will happen?
-  goal TEXT NOT NULL,               -- What are we trying to achieve?
-  safety_argument TEXT NOT NULL,    -- Why is this safe/reversible?
+  expected_effect TEXT,             -- What will happen? (optional for abbreviated mode)
+  goal TEXT,                        -- What are we trying to achieve? (optional)
+  safety_argument TEXT,             -- Why is this safe/reversible? (optional)
 
   -- Dry run results (if applicable)
   dry_run_output TEXT,
@@ -522,15 +568,19 @@ CREATE TABLE requests (
 
   -- State
   status TEXT NOT NULL DEFAULT 'pending',
-    -- 'pending', 'approved', 'rejected', 'executed',
-    -- 'execution_failed', 'cancelled', 'timeout', 'escalated'
+    -- 'pending', 'approved', 'executing', 'executed',
+    -- 'execution_failed', 'cancelled', 'timeout', 'escalated', 'timed_out'
   min_approvals INTEGER NOT NULL DEFAULT 2,
   require_different_model INTEGER NOT NULL DEFAULT 0,
 
-  -- Execution results
+  -- Execution info
   executed_at TEXT,
-  execution_output TEXT,
+  executed_by_session_id TEXT REFERENCES sessions(id),
+  executed_by_agent TEXT,
+  executed_by_model TEXT,
+  execution_log_path TEXT,          -- Path to .slb/logs/req-{uuid}.log (not TEXT blob!)
   execution_exit_code INTEGER,
+  execution_duration_ms INTEGER,
 
   -- Rollback info
   rollback_path TEXT,               -- Path to captured state
@@ -539,13 +589,13 @@ CREATE TABLE requests (
   -- Timestamps
   created_at TEXT NOT NULL,
   resolved_at TEXT,                 -- When approved/rejected/etc
-  expires_at TEXT,                  -- Auto-timeout deadline
-
-  -- Indexes
-  INDEX idx_requests_status (status),
-  INDEX idx_requests_project (project_path),
-  INDEX idx_requests_created (created_at DESC)
+  expires_at TEXT,                  -- Auto-timeout deadline for pending
+  approval_expires_at TEXT          -- When approval becomes stale (must re-review)
 );
+
+CREATE INDEX idx_requests_status ON requests(status);
+CREATE INDEX idx_requests_project ON requests(project_path);
+CREATE INDEX idx_requests_created ON requests(created_at DESC);
 
 -- Reviews (approvals and rejections)
 CREATE TABLE reviews (
@@ -559,7 +609,8 @@ CREATE TABLE reviews (
 
   -- Decision
   decision TEXT NOT NULL,           -- 'approve' or 'reject'
-  signature TEXT NOT NULL,          -- HMAC signature with session key
+  signature TEXT NOT NULL,          -- HMAC: HMAC(session_key, request_id + decision + timestamp)
+  signature_timestamp TEXT NOT NULL, -- ISO 8601 timestamp included in signature (prevents replay)
 
   -- Structured response to requestor's justification
   reason_response TEXT,
@@ -576,9 +627,9 @@ CREATE TABLE reviews (
   UNIQUE(request_id, reviewer_session_id)
 );
 
--- Full-text search
+-- Full-text search (external content table mode)
 CREATE VIRTUAL TABLE requests_fts USING fts5(
-  command,
+  command_raw,
   reason,
   expected_effect,
   goal,
@@ -586,6 +637,22 @@ CREATE VIRTUAL TABLE requests_fts USING fts5(
   content='requests',
   content_rowid='rowid'
 );
+
+-- Keep FTS in sync with requests (external content table mode requires triggers)
+CREATE TRIGGER requests_ai AFTER INSERT ON requests BEGIN
+  INSERT INTO requests_fts(rowid, command_raw, reason, expected_effect, goal, safety_argument)
+  VALUES (new.rowid, new.command_raw, new.reason, new.expected_effect, new.goal, new.safety_argument);
+END;
+CREATE TRIGGER requests_ad AFTER DELETE ON requests BEGIN
+  INSERT INTO requests_fts(requests_fts, rowid, command_raw, reason, expected_effect, goal, safety_argument)
+  VALUES ('delete', old.rowid, old.command_raw, old.reason, old.expected_effect, old.goal, old.safety_argument);
+END;
+CREATE TRIGGER requests_au AFTER UPDATE ON requests BEGIN
+  INSERT INTO requests_fts(requests_fts, rowid, command_raw, reason, expected_effect, goal, safety_argument)
+  VALUES ('delete', old.rowid, old.command_raw, old.reason, old.expected_effect, old.goal, old.safety_argument);
+  INSERT INTO requests_fts(rowid, command_raw, reason, expected_effect, goal, safety_argument)
+  VALUES (new.rowid, new.command_raw, new.reason, new.expected_effect, new.goal, new.safety_argument);
+END;
 
 -- Analytics/learning
 CREATE TABLE execution_outcomes (
@@ -620,11 +687,11 @@ CREATE TABLE pattern_changes (
   reviewed_by TEXT,                 -- Human who approved/rejected
   reviewed_at TEXT,
 
-  created_at TEXT NOT NULL,
-
-  INDEX idx_pattern_changes_status (status),
-  INDEX idx_pattern_changes_type (change_type)
+  created_at TEXT NOT NULL
 );
+
+CREATE INDEX idx_pattern_changes_status ON pattern_changes(status);
+CREATE INDEX idx_pattern_changes_type ON pattern_changes(change_type);
 
 -- Track which patterns are agent-added vs built-in
 CREATE TABLE custom_patterns (
@@ -661,11 +728,12 @@ type RequestStatus string
 const (
     StatusPending         RequestStatus = "pending"
     StatusApproved        RequestStatus = "approved"
-    StatusRejected        RequestStatus = "rejected"
+    StatusExecuting       RequestStatus = "executing"
     StatusExecuted        RequestStatus = "executed"
     StatusExecutionFailed RequestStatus = "execution_failed"
     StatusCancelled       RequestStatus = "cancelled"
     StatusTimeout         RequestStatus = "timeout"
+    StatusTimedOut        RequestStatus = "timed_out"
     StatusEscalated       RequestStatus = "escalated"
 )
 
@@ -687,11 +755,22 @@ type Requestor struct {
     Model     string `json:"model"`
 }
 
+// CommandSpec ensures approvals bind to exactly what will execute
+type CommandSpec struct {
+    Raw              string   `json:"raw"`                         // Exactly what the agent requested
+    Argv             []string `json:"argv,omitempty"`              // Parsed argv (preferred for execution)
+    Cwd              string   `json:"cwd"`                         // Working directory at request time
+    Shell            bool     `json:"shell"`                       // Whether shell parsing is required
+    Hash             string   `json:"hash"`                        // sha256 of the above fields
+    DisplayRedacted  string   `json:"display_redacted,omitempty"`  // Redacted version for display
+    ContainsSensitive bool    `json:"contains_sensitive"`
+}
+
 type Justification struct {
     Reason         string `json:"reason"`
-    ExpectedEffect string `json:"expected_effect"`
-    Goal           string `json:"goal"`
-    SafetyArgument string `json:"safety_argument"`
+    ExpectedEffect string `json:"expected_effect,omitempty"`  // Optional for abbreviated mode
+    Goal           string `json:"goal,omitempty"`             // Optional
+    SafetyArgument string `json:"safety_argument,omitempty"`  // Optional
 }
 
 type DryRun struct {
@@ -699,10 +778,18 @@ type DryRun struct {
     Output  string `json:"output"`
 }
 
+type Executor struct {
+    SessionID string `json:"session_id"`
+    AgentName string `json:"agent_name"`
+    Model     string `json:"model"`
+}
+
 type Execution struct {
     ExecutedAt time.Time `json:"executed_at"`
-    Output     string    `json:"output"`
+    Executor   Executor  `json:"executor"`
+    LogPath    string    `json:"log_path"`       // Path to log file (not inline output)
     ExitCode   int       `json:"exit_code"`
+    DurationMs int64     `json:"duration_ms"`
 }
 
 type Rollback struct {
@@ -719,7 +806,7 @@ type Attachment struct {
 type Request struct {
     ID          string        `json:"id"`
     ProjectPath string        `json:"project_path"`
-    Command     string        `json:"command"`
+    Command     CommandSpec   `json:"command"`          // Structured command specification
     RiskTier    RiskTier      `json:"risk_tier"`
 
     Requestor     Requestor     `json:"requestor"`
@@ -735,9 +822,10 @@ type Request struct {
     Execution *Execution `json:"execution,omitempty"`
     Rollback  *Rollback  `json:"rollback,omitempty"`
 
-    CreatedAt  time.Time  `json:"created_at"`
-    ResolvedAt *time.Time `json:"resolved_at,omitempty"`
-    ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+    CreatedAt         time.Time  `json:"created_at"`
+    ResolvedAt        *time.Time `json:"resolved_at,omitempty"`
+    ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+    ApprovalExpiresAt *time.Time `json:"approval_expires_at,omitempty"` // When approval becomes stale
 }
 
 type Reviewer struct {
@@ -779,19 +867,18 @@ type Review struct {
                                           ▲
                                           │ cancel
                                           │
-┌─────────┐      ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ CREATED │ ───▶ │   PENDING   │───▶│  APPROVED   │───▶│  EXECUTED   │
-└─────────┘      └─────────────┘    └─────────────┘    └─────────────┘
+┌─────────┐      ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ CREATED │ ───▶ │   PENDING   │───▶│  APPROVED   │───▶│  EXECUTING  │───▶│  EXECUTED   │
+└─────────┘      └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
                        │                                      │
-                       │                                      ▼
-                       │                              ┌───────────────────┐
-                       │ reject                       │ EXECUTION_FAILED  │
-                       ▼                              └───────────────────┘
-                 ┌─────────────┐
-                 │  REJECTED   │
+                       │                             ┌────────┴────────┐
+                       │ reject                      ▼                 ▼
+                       ▼                     ┌─────────────┐   ┌───────────────────┐
+                 ┌─────────────┐             │  TIMED_OUT  │   │ EXECUTION_FAILED  │
+                 │  REJECTED   │             └─────────────┘   └───────────────────┘
                  └─────────────┘
                        │
-                       │ timeout
+                       │ timeout (pending)
                        ▼
                  ┌─────────────┐    ┌─────────────┐
                  │   TIMEOUT   │───▶│  ESCALATED  │ (human notified)
@@ -806,12 +893,16 @@ type Review struct {
 | PENDING | APPROVED | Required approvals received |
 | PENDING | REJECTED | Any rejection received |
 | PENDING | CANCELLED | Requestor cancels |
-| PENDING | TIMEOUT | Expiry time reached |
+| PENDING | TIMEOUT | Expiry time reached (pending) |
 | TIMEOUT | ESCALATED | Human notification sent |
-| APPROVED | EXECUTED | `slb execute` runs command |
+| APPROVED | EXECUTING | `slb execute` begins execution |
 | APPROVED | CANCELLED | Requestor decides not to execute |
+| EXECUTING | EXECUTED | Command completes successfully |
+| EXECUTING | EXECUTION_FAILED | Command exits with non-zero or error |
+| EXECUTING | TIMED_OUT | Execution exceeds --timeout |
 | EXECUTED | - | Terminal state |
 | EXECUTION_FAILED | - | Terminal state |
+| TIMED_OUT | - | Terminal state |
 | REJECTED | - | Terminal state |
 
 ---
@@ -845,39 +936,89 @@ slb session start --agent <name> --program <prog> --model <model>
 slb session end [--session-id <id>]
   Alias: -s for --session-id (used globally for all commands)
 
+slb session resume --agent <name> [--program <prog>]
+  Returns: existing active session if found, otherwise creates new
+  Useful when agent restarts and wants to maintain session continuity
+  Matches on agent name + program + project path
+
 slb session list [--project <path>] [--json]
 slb session heartbeat --session-id <id>
+slb session reset-limits --session-id <id>   # Human can reset rate limits
 ```
 
 **Global flag aliases** (apply to all commands):
 - `-s` → `--session-id`
 - `-j` → `--json`
-- `-p` → `--project`
+- `-C` → `--project` (matches git's `-C <path>` convention; `-p` reserved for `--program`)
 
-### Request Commands
+### JSON Output Contract (Stable API)
+
+The CLI is agent-first, so `--json` output is treated as a **stable API contract**:
+
+- **All JSON keys are `snake_case`** (no mixed `camelCase`)
+- **Timestamps are RFC3339 UTC** (e.g., `2025-12-13T14:32:05Z`)
+- Human-friendly formatting goes to **stderr**, machine JSON goes to **stdout**
+- Commands that return lists return a **JSON array**
+- Commands that stream (e.g., `watch`) output **NDJSON** (one JSON object per line) with `--json`
+
+### Atomic Execution (Primary Agent Command)
 
 ```bash
-# Submit a command for approval (primary command for agents)
+# "Do it safely" — Checks, Requests, Waits, and Executes in one blocking call.
+# THIS IS THE PRIMARY COMMAND AGENTS SHOULD USE.
+slb run "<command>" \
+  --reason "Why I need to run this" \
+  [--expected-effect "What will happen"] \
+  [--goal "What I'm trying to achieve"] \
+  [--safety "Why this is safe/reversible"] \
+  [--justification "Combined explanation (alternative to 4 separate fields)"] \
+  [--session-id <id>] \
+  [--timeout <seconds>]           # Approval wait timeout (default: 300)
+  [--yield]                       # Allow this agent to review others while waiting (prevents deadlock)
+
+  Behavior:
+  1. Checks patterns. If SAFE: Executes immediately (pass-through).
+  2. If DANGEROUS/CRITICAL:
+     - Creates request automatically
+     - Blocks process (streaming status to stderr)
+     - If Approved: Executes immediately IN CALLER'S SHELL ENVIRONMENT
+     - If Rejected/Timeout: Exits with code 1 and JSON error
+  3. Command runs in the CALLING process's environment (inherits PATH, AWS_*, KUBECONFIG, etc.)
+
+  Returns: { "status": "executed"|"rejected"|"timeout", "exit_code": N, ... }
+```
+
+### Request Commands (Plumbing - for manual/advanced workflows)
+
+```bash
+# Submit a command for approval (use `slb run` instead for most cases)
 slb request "<command>" \
   --reason "Why I need to run this" \
   --expected-effect "What will happen" \
   --goal "What I'm trying to achieve" \
   --safety "Why this is safe/reversible" \
+  [--justification "Combined explanation (alternative to 4 separate fields)"] \
+  [--meta-file request.json]      # Pass rich metadata via file (avoids quoting hell)
+  [--from-stdin]                  # Or pipe JSON into stdin
   [--attach-file <path>:<lines>] \
   [--attach-context "<text>"] \
+  [--redact '<pattern>']          # Redact sensitive data in logs/display
   [--session-id <id>] \
   [--wait]                        # Block until approved/rejected
+  [--execute]                     # If approved, execute immediately
   [--timeout <seconds>]
 
-  Returns: request ID
+  Returns: request ID (or execution result with --wait --execute)
 
 # Check request status
 slb status <request-id>
   Returns: current status, reviews, etc.
 
 # List pending requests
-slb pending [--project <path>] [--all-projects]
+slb pending [--project <path>] [--all-projects] [--review-pool]
   Returns: list of pending requests
+  --all-projects: Show from all projects (requires cross_project_reviews config)
+  --review-pool: Show from configured review pool projects only
 
 # Cancel own request
 slb cancel <request-id> --session-id <id>
@@ -890,6 +1031,10 @@ slb cancel <request-id> --session-id <id>
 slb review <request-id>
   Shows: command, justification, dry-run output, attachments
 
+# Review multiple requests at once
+slb review <id1> <id2> <id3> --json
+  Returns: array of request details
+
 # Approve a request
 slb approve <request-id> \
   --session-id <id> \
@@ -898,6 +1043,13 @@ slb approve <request-id> \
   [--goal-response "..."] \
   [--safety-response "..."] \
   [--comment "Additional notes"]
+
+# Bulk approve multiple requests
+slb approve <id1> <id2> <id3> \
+  --session-id <id> \
+  [--reason-response "Batch approval: verified all are build cleanup"]
+  # Bulk operations require all requests to be same tier (safety check)
+  # Use --force-mixed-tiers to override
 
 # Reject a request
 slb reject <request-id> \
@@ -913,17 +1065,34 @@ slb reject <request-id> \
 
 ```bash
 # Execute an approved request
-slb execute <request-id> [--session-id <id>]
-  Runs the command, captures output
-  Returns: exit code, stdout, stderr
+slb execute <request-id> [--session-id <id>] \
+  [--timeout <seconds>]           # Kill command after timeout (default: 300)
+  [--background]                  # Don't wait for completion, return PID
+
+  Execution gate conditions (enforced by slb execute):
+  1. Request status is APPROVED
+  2. approval_expires_at has not elapsed (default: 30 min from approval)
+  3. command_hash still matches (no mutation since approval)
+  4. Current pattern policy does not raise the required tier/approvals
+  5. First successful executor wins (idempotent)
+
+  IMPORTANT: Command runs in the CALLING process's environment:
+  - Inherits current shell env (AWS_*, PATH, KUBECONFIG, SSH_AUTH_SOCK, etc.)
+  - Inherits current TTY (if interactive)
+  - Streams stdout/stderr to terminal AND logs to file
+  - Reports exit code back to DB to close request
+
+  Returns: { "exit_code": N, "stdout": "...", "stderr": "...", "duration_ms": N }
 
 # Emergency execute (human override, bypasses approval)
 slb emergency-execute "<command>" \
   --reason "Why this can't wait" \
-  [--capture-rollback]
+  [--capture-rollback] \
+  [--yes]                         # Skip interactive confirmation
+  [--ack "<sha256(command)>"]     # Required with --yes (binds to exact command)
 
-  Requires: interactive confirmation
-  Logs: extensively for audit
+  Requires: interactive confirmation OR --yes --ack flags
+  Logs: extensively for audit (reason, cwd, argv, stdout/stderr)
 ```
 
 ### History & Search
@@ -988,11 +1157,17 @@ slb patterns suggest --tier <tier> "<pattern>" --reason "..."
 ### Watch Mode (for reviewing agents)
 
 ```bash
-# Watch for pending requests and prompt for review
+# Watch for pending requests and emit events for agents (non-interactive)
 slb watch \
   [--project <path>] \
   [--session-id <id>] \
   [--auto-approve-caution]    # Auto-approve CAUTION tier
+  [--json]                    # NDJSON stream: one event per line
+
+  # Example NDJSON event:
+  # {"event":"request_pending","request_id":"req-...","risk_tier":"dangerous","created_at":"..."}
+
+  # Interactive approve/reject UX is exclusively in `slb tui`
 ```
 
 ### TUI Dashboard (Human-Only Interface)
@@ -1033,31 +1208,32 @@ func printQuickRef() {
 │     Two-agent approval for dangerous commands                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  START SESSION (once per agent):                                        │
+│  🔷 SETUP (once per agent session):                                     │
 │    slb session start -a <Name> -p claude-code -m opus-4.5 -j           │
 │    → Save session_id from JSON output                                   │
 │                                                                         │
-│  BEFORE DANGEROUS COMMANDS:                                             │
-│    slb check "rm -rf ./build"                    # Need approval?       │
-│    slb request "..." -s $SID \                                          │
-│        --reason "..." --expected-effect "..."                           │
-│        --goal "..." --safety "..."                                      │
+│  🔶 AS REQUESTOR (when you need to run something dangerous):            │
+│    slb run "rm -rf ./build" --reason "Cleanup" --timeout 300 -j        │
+│    → Checks tier, requests if needed, waits, executes if approved       │
+│                                                                         │
+│  PLUMBING (manual workflow - advanced):                                 │
+│    slb request "..." --wait --execute -s $SID --reason "..."           │
 │    slb status $REQ --wait -j                     # Block til decision   │
 │    slb execute $REQ -j                           # Run if approved      │
 │                                                                         │
-│  AS REVIEWER (check periodically!):                                     │
+│  🔷 AS REVIEWER (check every few minutes!):                             │
 │    slb pending -j                                # List pending         │
 │    slb review <id> -j                            # Full details         │
-│    slb approve <id> -s $SID                      # Sign off             │
+│    slb approve <id> <id2> <id3> -s $SID          # Bulk approve         │
 │    slb reject <id> -s $SID --reason "..."        # Block it             │
 │                                                                         │
-│  ADD NEW DANGEROUS PATTERNS (agents can do this!):                      │
+│  🔶 PATTERNS (make things safer - agents CAN add, CANNOT remove):       │
 │    slb patterns add --tier critical "^kubectl drain" --reason "..."     │
 │                                                                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  TIERS: 🔴 CRITICAL (2 approvals)  🟠 DANGEROUS (1)  🟡 CAUTION (auto)  │
-│  FLAGS: -s/--session-id   -j/--json   -p/--project                      │
-│  HUMAN: slb tui                                                         │
+│  TIERS: 🔴 CRITICAL (2+)  🟠 DANGEROUS (1)  🟡 CAUTION (auto-approve)   │
+│  FLAGS: -s/--session-id   -j/--json   -C/--project                      │
+│  HUMAN: slb tui                  HELP: slb <command> --help             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1098,7 +1274,7 @@ func printQuickRef() {
 │                            │  └────────────────────────────────────────────────┘│
 │  🟢 RedStone               │                                                    │
 │     cursor claude-sonnet   │  ┌────────────────────────────────────────────────┐│
-│     Last: 2m ago           │  │ 🟡 DANGEROUS  req-c3d4  5m ago                 ││
+│     Last: 2m ago           │  │ 🟠 DANGEROUS  req-c3d4  5m ago                 ││
 │                            │  │ git reset --hard HEAD~3                         ││
 │                            │  │ By: GreenLake (claude-code opus-4.5)            ││
 │                            │  │ "Reverting broken commits from..."              ││
@@ -1208,11 +1384,12 @@ func printQuickRef() {
 ### Visual Design Principles
 
 1. **Information density**: Show key info at a glance, details on demand
-2. **Color coding**:
+2. **Color coding** (consistent across TUI, CLI output, notifications):
    - 🔴 Red: CRITICAL risk, rejected requests
-   - 🟡 Yellow: DANGEROUS risk, pending
-   - 🟢 Green: approved, executed, safe
-   - 🔵 Blue: informational
+   - 🟠 Orange: DANGEROUS risk, pending
+   - 🟡 Yellow: CAUTION risk, auto-approved
+   - 🟢 Green: approved, executed, SAFE tier
+   - 🔵 Blue: informational, metadata
 3. **Keyboard-first**: All actions have single-key shortcuts
 4. **Responsive**: Adapts to terminal width (80 col minimum, scales to ultrawide)
 5. **Real-time updates**: Dashboard refreshes as state changes
@@ -1241,12 +1418,20 @@ min_approvals = 2
 
 # Require approver to be different model than requestor
 require_different_model = false
+different_model_timeout = 300      # Escalate to human after 5 min if no different-model available
+
+# Conflict resolution when reviewers disagree
+conflict_resolution = "any_rejection_blocks"  # "any_rejection_blocks" | "first_wins" | "human_breaks_tie"
 
 # Timeout for pending requests (seconds)
-request_timeout = 1800  # 30 minutes
+request_timeout = 1800             # 30 minutes
+
+# Approval validity (once approved, how long until it becomes stale)
+approval_ttl_minutes = 30          # Default
+approval_ttl_critical_minutes = 10 # Shorter for CRITICAL
 
 # What to do when request times out
-timeout_action = "escalate"  # "escalate" | "auto_reject" | "auto_approve_warn"
+timeout_action = "escalate"        # "escalate" | "auto_reject" | "auto_approve_warn"
 
 # Enable dry-run pre-flight for supported commands
 enable_dry_run = true
@@ -1255,6 +1440,13 @@ enable_dry_run = true
 enable_rollback_capture = true
 max_rollback_size_mb = 100
 
+# Allow reviewers to see/approve requests from other projects
+cross_project_reviews = false
+
+# Projects that share a review pool (only if cross_project_reviews = true)
+# Empty = all projects visible to all reviewers
+review_pool = []                   # e.g., ["/data/myapp", "/data/myapp-infra"]
+
 [daemon]
 # Use file watcher instead of polling
 use_file_watcher = true
@@ -1262,8 +1454,25 @@ use_file_watcher = true
 # IPC socket path (for fast agent communication)
 ipc_socket = "/tmp/slb-{project-hash}.sock"
 
+# TCP Listener (Optional - for Docker/Remote agents)
+# Agents connect via SLB_HOST=host.docker.internal:3333
+tcp_addr = ""                      # e.g., "127.0.0.1:3333"
+tcp_require_auth = true            # Require session key in TCP handshake
+tcp_allowed_ips = []               # e.g., ["127.0.0.1", "172.17.0.0/16"] Docker bridge
+
 # Log level
 log_level = "info"
+
+# PID file (for single-instance enforcement)
+pid_file = "/tmp/slb-daemon-{user}.pid"
+
+[rate_limits]
+# Prevent request flooding (per session)
+max_pending_per_session = 5        # Max concurrent pending requests per agent
+max_requests_per_minute = 10       # Request creation rate limit per agent
+
+# When limit exceeded
+rate_limit_action = "reject"       # "reject" | "queue" | "warn"
 
 [notifications]
 # Desktop notifications for CRITICAL pending requests
@@ -1299,14 +1508,21 @@ auto_git_commit = true
 # These ALWAYS require 2+ approvals from OTHER agents (not the requestor)
 # So for CRITICAL: requestor + 2 reviewers = minimum 3 agents involved
 min_approvals = 2
+
+# Dynamic Quorum: If true, and active_sessions < (min_approvals + 1),
+# allow execution if ALL other active agents approve.
+dynamic_quorum = true
+dynamic_quorum_floor = 1           # Never go below this, even with few agents
+
 patterns = [
   "^rm\\s+-rf\\s+/(?!tmp)",           # rm -rf / (but not /tmp)
   "^rm\\s+-rf\\s+~",                  # rm -rf ~
   "DROP\\s+DATABASE",                 # SQL DROP DATABASE
   "DROP\\s+SCHEMA",
   "TRUNCATE\\s+TABLE",
-  "DELETE\\s+FROM\\s+\\w+\\s*;",      # DELETE without WHERE (deletes ALL rows!)
-  "DELETE\\s+FROM(?!.*WHERE)",        # DELETE without WHERE clause
+  # DELETE without WHERE - handles multiline, comments, varied whitespace
+  "DELETE\\s+FROM\\s+[\\w.`\"\\[\\]]+\\s*($|;|--|/\\*)",  # DELETE FROM table; or EOF
+  "DELETE\\s+FROM\\s+[\\w.`\"\\[\\]]+\\s+(?!WHERE|USING|RETURNING)",  # DELETE FROM table <not WHERE>
   "^terraform\\s+destroy(?!.*-target)", # terraform destroy (without -target)
   "^kubectl\\s+delete\\s+(node|namespace|pv|pvc)",
   "^helm\\s+uninstall.*--all",
@@ -1515,42 +1731,39 @@ SESSION_JSON=$(slb session start \
   --model "opus-4.5" \
   --json)
 
-SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.sessionId')
+SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.session_id')
 
-# 2. When dangerous command needed, check pattern first
-PATTERN_CHECK=$(slb patterns test "rm -rf ./build" --json)
-NEEDS_APPROVAL=$(echo "$PATTERN_CHECK" | jq -r '.needsApproval')
+# 2. Use slb run for dangerous commands — it handles everything automatically
+# (checks pattern, creates request if needed, waits, executes if approved)
+RESULT=$(slb run "rm -rf ./build" \
+  --session-id "$SESSION_ID" \
+  --reason "Removing stale build artifacts" \
+  --timeout 300 \
+  --json)
 
-if [ "$NEEDS_APPROVAL" = "true" ]; then
-  # 3. Submit request
-  REQUEST_JSON=$(slb request "rm -rf ./build" \
-    --session-id "$SESSION_ID" \
-    --reason "Removing stale build artifacts" \
-    --expected-effect "Deletes ./build directory (~500MB)" \
-    --goal "Free up disk space before next build" \
-    --safety "Build directory is regenerated on next build, no source code" \
-    --json)
-
-  REQUEST_ID=$(echo "$REQUEST_JSON" | jq -r '.requestId')
-
-  # 4. Wait for approval (with timeout)
-  STATUS_JSON=$(slb status "$REQUEST_ID" --wait --timeout 300 --json)
-  STATUS=$(echo "$STATUS_JSON" | jq -r '.status')
-
-  case "$STATUS" in
-    approved)
-      # 5. Execute
-      slb execute "$REQUEST_ID" --json
-      ;;
-    rejected)
-      echo "Request rejected: $(echo "$STATUS_JSON" | jq -r '.reviews[0].reason')"
-      # Reconsider approach...
-      ;;
-    timeout)
-      echo "Request timed out, escalating to human..."
-      ;;
-  esac
+STATUS=$(echo "$RESULT" | jq -r '.status')
+if [ "$STATUS" = "executed" ]; then
+  echo "Build directory cleaned"
+elif [ "$STATUS" = "rejected" ]; then
+  echo "Request rejected: $(echo "$RESULT" | jq -r '.reject_reason')"
+  # Reconsider approach...
+else
+  echo "Request timed out, escalating to human..."
 fi
+
+# --- Alternative: Manual plumbing workflow (for advanced use cases) ---
+# PATTERN_CHECK=$(slb patterns test "rm -rf ./build" --json)
+# NEEDS_APPROVAL=$(echo "$PATTERN_CHECK" | jq -r '.needs_approval')
+#
+# if [ "$NEEDS_APPROVAL" = "true" ]; then
+#   REQUEST_JSON=$(slb request "rm -rf ./build" \
+#     --session-id "$SESSION_ID" \
+#     --reason "Removing stale build artifacts" \
+#     --wait --execute --timeout 300 --json)
+#
+#   REQUEST_ID=$(echo "$REQUEST_JSON" | jq -r '.request_id')
+#   # ... handle result
+# fi
 
 # 6. End session when done
 slb session end --session-id "$SESSION_ID"
@@ -1614,6 +1827,41 @@ done
 2. **Honor system**: Agents are instructed to use slb, but can't be forced
 3. **Defense in depth**: slb is one layer; combine with file permissions, RBAC, etc.
 4. **Audit over prevention**: Focus on knowing what happened, not preventing everything
+
+### Signature Verification
+
+Review signatures include timestamps and are validated as follows:
+- Signature = HMAC-SHA256(session_key, request_id || decision || timestamp)
+- Timestamp must be within 5 minutes of current time (prevents replay)
+- Request ID binding prevents approval from being applied to different request
+- Session key binding ensures only the registered session can sign
+
+### Sensitive Data Handling
+
+Commands may contain sensitive data (API keys, passwords, connection strings).
+slb provides options to handle this:
+
+```bash
+# Redact sensitive portions in logs/display (still executes full command)
+slb request 'mysql -p$DB_PASS -e "DROP TABLE users"' \
+  --redact '\$\w+' \              # Redacts env var references
+  --redact 'password=\S+'         # Redacts password params
+```
+
+Redaction applies to:
+- TUI display
+- History browser
+- Git audit commits
+- Agent Mail notifications
+
+The **actual command** stored in the database is unredacted for execution,
+but marked with `contains_sensitive = true` flag. Access to raw commands
+requires explicit `--show-sensitive` flag.
+
+**Default redaction patterns** (always applied):
+- `-p<password>`, `--password=<value>`
+- `Bearer <token>`, `Authorization: <value>`
+- Environment variable expansions (`$VAR`, `${VAR}`)
 
 ### Recommendations
 
@@ -1683,6 +1931,25 @@ done
 2. Recalculate timeouts from creation time
 3. Warn if requests found that are past expiry
 
+**Graceful degradation** (when daemon is unavailable):
+
+Commands check daemon status before requiring it:
+```bash
+# slb request checks for daemon
+$ slb request "rm -rf ./build" ...
+Warning: slb daemon not running. Request created but notifications disabled.
+Reviewers must manually check: slb pending
+Start daemon with: slb daemon start
+
+# Request still works, just without:
+# - Desktop notifications
+# - Real-time TUI updates
+# - Agent Mail integration
+# - Fast IPC (falls back to file polling)
+```
+
+This allows slb to function in degraded mode rather than failing completely.
+
 ### Edge Case 7: Filesystem Permissions
 
 **Scenario**: Agent can't write to .slb/pending.
@@ -1691,6 +1958,45 @@ done
 1. `slb init` creates directory with appropriate permissions
 2. Clear error message: "Cannot write to .slb/, check permissions"
 3. Fallback to user-level pending queue
+
+### Edge Case 8: Request Flooding
+
+**Scenario**: Agent gets stuck in loop, submits hundreds of requests.
+
+**Prevention**:
+1. Per-session rate limits (default: 10/min, 5 concurrent pending)
+2. When exceeded: immediate rejection with clear error
+3. Alert in TUI dashboard: "Session X hitting rate limits"
+4. Historical tracking for pattern detection
+
+**Recovery**:
+```bash
+slb session reset-limits --session-id <id>  # Human can reset if legitimate
+```
+
+### Edge Case 9: No Different-Model Reviewer Available
+
+**Scenario**: Configuration requires `require_different_model = true` for a request,
+but no agent using a different model is active.
+
+**Solutions**:
+1. Configurable timeout before escalation (`different_model_timeout = 300`)
+2. After timeout: escalate to human with clear message:
+   ```
+   "Request req-xyz requires different-model review (requestor: opus-4.5),
+    but no active sessions with a different model. Escalating to human."
+   ```
+3. TUI shows the constraint in request details:
+   ```
+   ⚠️ Requires different model (requestor: opus-4.5)
+   Available reviewers: GreenLake (opus-4.5) ❌ same model
+   ```
+4. Consider auto-suggest: "Try launching a reviewer agent with claude-sonnet?"
+
+**Prevention**:
+- Document model diversity in agent deployment
+- Consider requiring 2+ models when `require_different_model = true` is set
+- `slb session list --json` shows model distribution for planning
 
 ---
 
@@ -1919,23 +2225,55 @@ Human operators can use `slb tui` for a visual dashboard, or `slb emergency-exec
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
 1. **Single vs multiple binaries**: Should daemon be separate binary or `slb daemon start` spawns subprocess?
 
-   *Recommendation*: Single binary, daemon runs as subprocess for simplicity.
+   *Decision*: Single binary with `slb daemon start` forking a background process.
+
+   **Implementation**:
+   ```go
+   // slb daemon start
+   if os.Getenv("SLB_DAEMON_MODE") != "1" {
+       // Fork ourselves with daemon flag
+       cmd := exec.Command(os.Args[0], "daemon", "start")
+       cmd.Env = append(os.Environ(), "SLB_DAEMON_MODE=1")
+       cmd.Start()
+       cmd.Process.Release() // Detach
+       fmt.Println("Daemon started, PID:", cmd.Process.Pid)
+       return
+   }
+   // Actually run daemon logic
+   runDaemon()
+   ```
+
+   **PID file**: `/tmp/slb-daemon-{user}.pid`
+   **Socket**: `/tmp/slb-{user}.sock`
+   **Logs**: `~/.slb/daemon.log`
 
 2. **Windows support priority**: How important is Windows support initially?
 
-   *Recommendation*: Linux/macOS first, Windows later (file watching differs significantly).
+   *Decision*: Linux/macOS first, Windows later (file watching differs significantly).
 
 3. **Multi-project awareness**: Should a single daemon handle multiple projects?
 
-   *Recommendation*: Yes, one user-level daemon monitoring all projects with .slb/ directories.
+   *Decision*: Yes, one user-level daemon monitoring all projects with .slb/ directories.
 
 4. **Rate limiting**: Should there be limits on request frequency?
 
-   *Recommendation*: Track but don't limit initially. Alert on anomalies.
+   *Decision*: Yes, implement per-session rate limits (10/min, 5 concurrent pending) to prevent
+   malfunctioning agents from flooding the review queue. See `[rate_limits]` config section.
+
+5. **Client-side vs daemon-side execution**: Where should commands actually execute?
+
+   *Decision*: Client-side execution. The daemon is a **notary** (verifies approvals and signatures),
+   not an executor. Commands must run in the **calling process's shell environment** to inherit:
+   - AWS_PROFILE, AWS_ACCESS_KEY_ID
+   - KUBECONFIG pointing to the right cluster
+   - Activated virtualenvs (VIRTUAL_ENV, modified PATH)
+   - SSH_AUTH_SOCK for SSH agent forwarding
+   - Database connection strings in env vars
+   - Shell aliases or functions
 
 ---
 
@@ -1950,6 +2288,28 @@ Patterns use regex with these conventions:
 - `(?!...)` for negative lookahead
 - `.*` for any characters
 
+### Command Normalization (Before Pattern Matching)
+
+To reduce false negatives/positives, slb normalizes commands before applying tier patterns:
+
+1. **Parse** with a shell-aware tokenizer (POSIX-like quoting rules)
+2. **Extract the primary command** from common wrappers:
+   - `sudo`, `doas`
+   - `env VAR=...`
+   - `command`, `builtin`
+   - `time`, `nice`, `ionice`, `nohup`
+3. **Detect compound commands** (`;`, `&&`, `||`, `|`, subshells):
+   - If any segment matches a tier, the whole request is treated as at least that tier
+   - If parsing fails, fall back to raw-regex and **upgrade** tier by one step as a conservative default
+4. **Normalize whitespace** and produce a canonical "display form" for the reviewer
+
+This keeps config patterns simple (they can still look like `^rm\s+-rf`) while making them work in real terminals.
+
+**Examples of normalization:**
+- `sudo rm -rf ./build` → primary command: `rm -rf ./build`
+- `env KUBECONFIG=/path kubectl delete pod` → primary command: `kubectl delete pod`
+- `cd /etc && rm -rf *` → compound, both segments checked, `/etc` as CWD for second
+
 ### Pattern Precedence
 
 When a command matches multiple patterns:
@@ -1961,14 +2321,34 @@ When a command matches multiple patterns:
 
 ### Path-Aware Patterns
 
-Some patterns should consider paths:
+Patterns run against the **Resolved Command** with paths expanded:
+
+1. `slb` detects CWD at request time
+2. Expands relative paths (`./`, `../`) to absolute paths
+3. Matches patterns against the fully resolved string
+
 ```toml
 # More dangerous if path is outside project
 [patterns.critical.context]
 pattern = "^rm\\s+-rf"
 require_path_check = true
-dangerous_paths = ["/", "~", "/etc", "/var", "/usr"]
+# Checks against the RESOLVED absolute path, regardless of how command was typed
+dangerous_prefixes = ["/", "/etc", "/var", "/usr", "/home"]
+safe_prefixes = ["${PROJECT_ROOT}/tmp", "${PROJECT_ROOT}/build"]
 ```
+
+### SQL Pattern Considerations
+
+SQL commands are notoriously hard to pattern-match because:
+- They can span multiple lines
+- Comments (`--`, `/* */`) can appear anywhere
+- Table names can be quoted (`"table"`, `` `table` ``, `[table]`)
+- CTEs can precede DELETE (`WITH x AS (...) DELETE FROM...`)
+
+The built-in SQL patterns are best-effort. For production databases:
+1. Use database-level permissions as primary control
+2. Consider adding custom patterns for your specific ORM/query style
+3. Enable `require_sql_explain = true` in config for EXPLAIN output attachment
 
 ---
 
@@ -1977,21 +2357,28 @@ dangerous_paths = ["/", "~", "/etc", "/var", "/usr"]
 ```json
 {
   "id": "req-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "projectPath": "/data/projects/myapp",
-  "command": "kubectl delete node worker-3",
-  "riskTier": "critical",
+  "project_path": "/data/projects/myapp",
+  "command": {
+    "raw": "kubectl delete node worker-3",
+    "argv": ["kubectl", "delete", "node", "worker-3"],
+    "cwd": "/data/projects/myapp",
+    "shell": false,
+    "hash": "sha256:abc123...",
+    "contains_sensitive": false
+  },
+  "risk_tier": "critical",
   "requestor": {
-    "sessionId": "sess-1234",
-    "agentName": "BlueDog",
+    "session_id": "sess-1234",
+    "agent_name": "BlueDog",
     "model": "gpt-5.1-codex"
   },
   "justification": {
     "reason": "Worker-3 has been in NotReady state for 15 minutes after kernel panic",
-    "expectedEffect": "Node removed from cluster, pods already evicted",
+    "expected_effect": "Node removed from cluster, pods already evicted",
     "goal": "Clean up cluster state by removing dead node reference",
-    "safetyArgument": "Node is dead, removal is cosmetic cleanup, can re-provision later"
+    "safety_argument": "Node is dead, removal is cosmetic cleanup, can re-provision later"
   },
-  "dryRun": {
+  "dry_run": {
     "command": "kubectl delete node worker-3 --dry-run=client",
     "output": "node \"worker-3\" deleted (dry run)"
   },
@@ -2002,10 +2389,11 @@ dangerous_paths = ["/", "~", "/etc", "/var", "/usr"]
     }
   ],
   "status": "pending",
-  "minApprovals": 2,
-  "requireDifferentModel": false,
-  "createdAt": "2025-12-13T14:32:05Z",
-  "expiresAt": "2025-12-13T15:02:05Z"
+  "min_approvals": 2,
+  "require_different_model": false,
+  "created_at": "2025-12-13T14:32:05Z",
+  "expires_at": "2025-12-13T15:02:05Z",
+  "approval_expires_at": null
 }
 ```
 
@@ -2092,35 +2480,38 @@ This is what `slb` (no args) prints. Copy the text version to AGENTS.md if neede
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  ⚡ SLB QUICK REFERENCE - Dangerous Command Approval                    │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  START SESSION (once):                                                  │
+│  🔷 SETUP (once per agent session):                                     │
 │    slb session start -a MyName -p claude-code -m opus-4.5 -j            │
 │                                                                         │
-│  BEFORE DANGEROUS COMMAND:                                              │
-│    slb check "rm -rf ./build"              # Is approval needed?        │
-│    slb request "rm -rf ./build" -s $SID \                               │
-│      --reason "..." --expected-effect "..." --goal "..." --safety "..." │
+│  🔶 AS REQUESTOR (when you need to run something dangerous):            │
+│    slb run "rm -rf ./build" --reason "Cleanup" --timeout 300 -j         │
+│    → Checks tier, requests if needed, waits, executes if approved       │
+│                                                                         │
+│  PLUMBING (advanced):                                                   │
+│    slb request "..." --wait --execute -s $SID --reason "..."            │
 │    slb status $REQ_ID --wait -j            # Wait for approval          │
 │    slb execute $REQ_ID -j                  # Run when approved          │
 │                                                                         │
-│  AS REVIEWER:                                                           │
+│  🔷 AS REVIEWER (check every few minutes!):                             │
 │    slb pending -j                          # Check for pending          │
 │    slb review $ID -j                       # Read details               │
-│    slb approve $ID -s $SID                 # Approve                    │
+│    slb approve $ID $ID2 -s $SID            # Bulk approve               │
 │    slb reject $ID -s $SID --reason "..."   # Reject                     │
 │                                                                         │
-│  ADD DANGEROUS PATTERNS (you can do this!):                             │
+│  🔶 PATTERNS (make things safer - agents CAN add, CANNOT remove):       │
 │    slb patterns add --tier critical "^pattern" --reason "..."           │
 │                                                                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  TIERS: 🔴 CRITICAL (2)  🟠 DANGEROUS (1)  🟡 CAUTION (auto-30s)        │
-│  FLAGS: -s/--session-id  -j/--json   FORGOT? Just run: slb              │
+│  TIERS: 🔴 CRITICAL (2+)  🟠 DANGEROUS (1)  🟡 CAUTION (auto)           │
+│  FLAGS: -s/--session-id  -j/--json  -C/--project                        │
+│  HUMAN: slb tui                 HELP: slb <command> --help              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-*Document version: 1.4*
-*Created: 2025-12-13*
+*Document version: 2.0*
+*Created: 2025-12-12*
 *Updated: 2025-12-13*
 *Changes:*
 - *v1.0: Initial comprehensive plan*
@@ -2128,4 +2519,23 @@ This is what `slb` (no args) prints. Copy the text version to AGENTS.md if neede
 - *v1.2: Removed robot mode (CLI is agent-first by design), base `slb` shows quickstart, added huh/lo/go-pretty/conc libraries*
 - *v1.3: Fixed DELETE without WHERE (now CRITICAL), fixed section numbering, replaced TypeScript with Go in examples, simplified Edge Case 1 (no self-approval), added `slb check` alias, added `-s/-j/-p` short flags, added `slb version`, added tests to implementation phases, fixed `slb completion` (was `slb init`)*
 - *v1.4: Added pattern management (agents can ADD but not REMOVE patterns), `slb patterns add/remove/request-removal/suggest`, pattern_changes and custom_patterns tables, base `slb` now shows colorful quick reference card with lipgloss styling*
-*Status: Ready for review*
+- *v2.0: Major revision incorporating feedback from Gemini 3 Deep-Think, GPT 5.2 Pro, and Claude Opus 4.5:*
+  - *Atomic `slb run` command (primary agent interface)*
+  - *Client-side execution (daemon is notary, not executor)*
+  - *Command hash binding with CommandSpec struct*
+  - *SQLite schema fixes (indexes outside tables, NULL uniqueness, FTS triggers)*
+  - *snake_case JSON contract for stable API*
+  - *Command normalization (strip sudo/env wrappers, detect compound commands)*
+  - *Canonical path resolution with CWD capture*
+  - *Sensitive data handling with redaction*
+  - *Approval TTL and re-verification at execution time*
+  - *Dynamic quorum for small agent pools*
+  - *Rate limiting per session*
+  - *TCP support for Docker agents*
+  - *Non-interactive `slb watch` (NDJSON stream)*
+  - *Graceful degradation when daemon is down*
+  - *Bulk approve/reject operations*
+  - *Session resume command*
+  - *Fixed -p flag conflict (now -C for project)*
+  - *Consistent emoji/color coding (🟠 for DANGEROUS, 🟡 for CAUTION)*
+*Status: Ready for implementation*

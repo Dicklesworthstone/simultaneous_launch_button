@@ -1,0 +1,29 @@
+# Binaries
+*.exe
+dist/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+vscode/node_modules/
+vscode/out/
+vscode/package-lock.json
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Test binaries
+*.test
+coverage.out
+dashboard_debug.txt
