@@ -125,9 +125,18 @@ func NewIPCServer(socketPath string, logger *log.Logger) (*IPCServer, error) {
 		return nil, fmt.Errorf("socket path is required")
 	}
 
-	// Remove stale socket if present.
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("removing stale socket: %w", err)
+	// Check if path exists and verify it's a socket before removing.
+	// Refuse to delete non-socket files for safety.
+	if fi, err := os.Lstat(socketPath); err == nil {
+		if fi.Mode().Type()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("path exists but is not a socket: %s", socketPath)
+		}
+		// It's a socket, safe to remove.
+		if err := os.Remove(socketPath); err != nil {
+			return nil, fmt.Errorf("removing stale socket: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("checking socket path: %w", err)
 	}
 
 	// Create the listener.

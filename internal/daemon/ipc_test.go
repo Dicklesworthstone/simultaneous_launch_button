@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,13 +55,64 @@ func TestNewIPCServer(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses to delete non-socket file", func(t *testing.T) {
+		t.Parallel()
+		socketPath := filepath.Join(t.TempDir(), "regular.file")
+
+		// Create a regular file at the socket path.
+		if err := os.WriteFile(socketPath, []byte("not a socket"), 0644); err != nil {
+			t.Fatalf("creating regular file: %v", err)
+		}
+
+		_, err := NewIPCServer(socketPath, newTestLogger())
+		if err == nil {
+			t.Error("expected error when path exists but is not a socket")
+		}
+		if err != nil && !strings.Contains(err.Error(), "not a socket") {
+			t.Errorf("expected error about non-socket, got: %v", err)
+		}
+
+		// Verify the file was NOT deleted.
+		if _, statErr := os.Stat(socketPath); os.IsNotExist(statErr) {
+			t.Error("regular file should not have been deleted")
+		}
+	})
+
 	t.Run("removes stale socket", func(t *testing.T) {
 		t.Parallel()
 		socketPath := filepath.Join(t.TempDir(), "stale.sock")
 
-		// Create a stale file.
-		if err := os.WriteFile(socketPath, []byte("stale"), 0644); err != nil {
-			t.Fatalf("creating stale file: %v", err)
+		// Create a real unix socket to simulate a stale one.
+		// We create a listener but don't close it until after stat check.
+		ln, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Fatalf("creating stale socket: %v", err)
+		}
+
+		// Verify socket exists before closing.
+		if _, statErr := os.Stat(socketPath); statErr != nil {
+			ln.Close()
+			t.Fatalf("stale socket not created: %v", statErr)
+		}
+
+		// Now close the old listener to release the socket file for reuse.
+		// The socket file should remain on disk.
+		ln.Close()
+
+		// On some systems, closing the listener removes the socket.
+		// If so, we'll create a new one with just os.Mknod or skip.
+		fi, statErr := os.Stat(socketPath)
+		if os.IsNotExist(statErr) {
+			// Socket was removed on close - this is platform-specific behavior.
+			// Create a socket file using net.Listen again and leave it for cleanup.
+			ln2, err := net.Listen("unix", socketPath)
+			if err != nil {
+				t.Fatalf("recreating stale socket: %v", err)
+			}
+			// Don't close ln2 - it will be cleaned up with temp dir
+			_ = ln2 // intentionally kept open
+		} else if statErr == nil && fi.Mode().Type()&os.ModeSocket == 0 {
+			t.Fatalf("expected socket but got %v", fi.Mode())
 		}
 
 		srv, err := NewIPCServer(socketPath, newTestLogger())
@@ -68,6 +120,21 @@ func TestNewIPCServer(t *testing.T) {
 			t.Fatalf("NewIPCServer failed: %v", err)
 		}
 		defer srv.Stop()
+	})
+
+	t.Run("refuses to delete directory", func(t *testing.T) {
+		t.Parallel()
+		socketPath := filepath.Join(t.TempDir(), "subdir")
+
+		// Create a directory at the socket path.
+		if err := os.Mkdir(socketPath, 0755); err != nil {
+			t.Fatalf("creating directory: %v", err)
+		}
+
+		_, err := NewIPCServer(socketPath, newTestLogger())
+		if err == nil {
+			t.Error("expected error when path exists but is a directory")
+		}
 	})
 }
 
