@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/Dicklesworthstone/slb/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -62,20 +63,31 @@ Commands are classified by risk level:
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		goVersion := runtime.Version()
 		configPath := flagConfig
 		if configPath == "" {
 			home, _ := os.UserHomeDir()
-			configPath = home + "/.slb/config.toml"
+			configPath = filepath.Join(home, ".slb", "config.toml")
 		}
 		dbPath := GetDB()
 		projectPath, _ := os.Getwd()
 
-		if flagJSON || flagOutput == "json" {
-			fmt.Printf(`{"version":"%s","commit":"%s","build_date":"%s","go_version":"%s","config_path":"%s","db_path":"%s","project_path":"%s"}`+"\n",
-				version, commit, date, goVersion, configPath, dbPath, projectPath)
-		} else {
+		payload := map[string]any{
+			"version":      version,
+			"commit":       commit,
+			"build_date":   date,
+			"go_version":   goVersion,
+			"config_path":  configPath,
+			"db_path":      dbPath,
+			"project_path": projectPath,
+		}
+
+		switch GetOutput() {
+		case "json", "yaml":
+			out := output.New(output.Format(GetOutput()))
+			return out.Write(payload)
+		case "text":
 			fmt.Printf("slb %s\n", version)
 			fmt.Printf("  commit:  %s\n", commit)
 			fmt.Printf("  built:   %s\n", date)
@@ -83,6 +95,9 @@ var versionCmd = &cobra.Command{
 			fmt.Printf("  config:  %s\n", configPath)
 			fmt.Printf("  db:      %s\n", dbPath)
 			fmt.Printf("  project: %s\n", projectPath)
+			return nil
+		default:
+			return fmt.Errorf("unsupported format: %s", GetOutput())
 		}
 	},
 }
