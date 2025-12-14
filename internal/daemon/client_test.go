@@ -752,6 +752,8 @@ func TestStopDaemonWithOptions_StopsProcessAndRemovesPIDFile(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start sleep: %v", err)
 	}
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
 	t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -766,6 +768,11 @@ func TestStopDaemonWithOptions_StopsProcessAndRemovesPIDFile(t *testing.T) {
 
 	if err := StopDaemonWithOptions(ServerOptions{PIDFile: pidFile}, 2*time.Second); err != nil {
 		t.Fatalf("StopDaemonWithOptions: %v", err)
+	}
+	select {
+	case <-waitCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected child process to be reaped")
 	}
 	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
 		t.Fatalf("expected pid file removed after stop")
