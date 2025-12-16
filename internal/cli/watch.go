@@ -219,7 +219,52 @@ func pollRequests(ctx context.Context, dbConn *db.DB, enc *json.Encoder, seen ma
 	return nil
 }
 
+// AutoApproveDecision encapsulates the result of the auto-approve decision.
+// This is returned by the pure decision function for testability.
+type AutoApproveDecision struct {
+	ShouldApprove bool
+	Reason        string
+}
+
+// shouldAutoApproveCaution is a SAFETY-CRITICAL pure function that determines
+// whether a request should be auto-approved. This function MUST maintain 100%
+// test coverage as it guards against unauthorized command execution.
+//
+// Decision rules:
+//   - Auto-approve must be enabled (checked at call site)
+//   - Request must still be in pending status
+//   - Request must be CAUTION tier (not DANGEROUS or CRITICAL)
+//
+// This function is intentionally side-effect free for reliable testing.
+func shouldAutoApproveCaution(
+	requestStatus db.RequestStatus,
+	requestRiskTier db.RiskTier,
+) AutoApproveDecision {
+	// Guard 1: Request must still be pending
+	if requestStatus != db.StatusPending {
+		return AutoApproveDecision{
+			ShouldApprove: false,
+			Reason:        "request not pending (status: " + string(requestStatus) + ")",
+		}
+	}
+
+	// Guard 2: Only CAUTION tier can be auto-approved
+	// CRITICAL and DANGEROUS tiers MUST require explicit human approval
+	if requestRiskTier != db.RiskTierCaution {
+		return AutoApproveDecision{
+			ShouldApprove: false,
+			Reason:        "not caution tier (tier: " + string(requestRiskTier) + ")",
+		}
+	}
+
+	return AutoApproveDecision{
+		ShouldApprove: true,
+		Reason:        "caution tier request eligible for auto-approval",
+	}
+}
+
 // autoApproveCaution automatically approves a CAUTION tier request.
+// This is the side-effectful wrapper that calls the pure decision function.
 func autoApproveCaution(ctx context.Context, requestID string) error {
 	dbConn, err := db.Open(GetDB())
 	if err != nil {
@@ -233,12 +278,13 @@ func autoApproveCaution(ctx context.Context, requestID string) error {
 		return fmt.Errorf("getting request: %w", err)
 	}
 
-	if request.Status != db.StatusPending {
-		return nil // Already resolved
-	}
-
-	if request.RiskTier != db.RiskTierCaution {
-		return fmt.Errorf("request is not CAUTION tier")
+	// Use pure decision function for safety-critical logic
+	decision := shouldAutoApproveCaution(request.Status, request.RiskTier)
+	if !decision.ShouldApprove {
+		if request.Status != db.StatusPending {
+			return nil // Already resolved - not an error
+		}
+		return fmt.Errorf("auto-approve denied: %s", decision.Reason)
 	}
 
 	// Determine reviewer identity
