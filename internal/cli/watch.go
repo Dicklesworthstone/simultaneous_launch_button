@@ -147,7 +147,95 @@ func runWatchPolling(ctx context.Context) error {
 	}
 }
 
+// PollAction represents the action to take for a polled request.
+type PollAction string
+
+const (
+	// PollActionEmitNew indicates a new pending request should be emitted.
+	PollActionEmitNew PollAction = "emit_new"
+	// PollActionEmitStatusChange indicates a status change event should be emitted.
+	PollActionEmitStatusChange PollAction = "emit_status_change"
+	// PollActionSkip indicates no event should be emitted.
+	PollActionSkip PollAction = "skip"
+)
+
+// RequestPollResult encapsulates the decision about what to do with a polled request.
+// This is returned by the pure evaluation function for testability.
+type RequestPollResult struct {
+	Action    PollAction
+	EventType string // Only set when Action is EmitStatusChange
+	Reason    string
+}
+
+// evaluateRequestForPolling is a pure function that determines what action to take
+// when a request is polled. This function should maintain 100% test coverage as it
+// contains the core polling business logic.
+//
+// Decision rules:
+//   - New request (not in seen map): emit "request_pending" event
+//   - Status changed: emit appropriate status change event
+//   - Status unchanged: skip (no event)
+func evaluateRequestForPolling(
+	requestID string,
+	currentStatus db.RequestStatus,
+	seen map[string]db.RequestStatus,
+) RequestPollResult {
+	prevStatus, exists := seen[requestID]
+
+	if !exists {
+		// New request - emit pending event
+		return RequestPollResult{
+			Action:    PollActionEmitNew,
+			EventType: "request_pending",
+			Reason:    "new request discovered",
+		}
+	}
+
+	if prevStatus == currentStatus {
+		// No change - skip
+		return RequestPollResult{
+			Action: PollActionSkip,
+			Reason: "status unchanged",
+		}
+	}
+
+	// Status changed - determine event type
+	eventType := statusToEventType(currentStatus)
+	if eventType == "" {
+		return RequestPollResult{
+			Action: PollActionSkip,
+			Reason: "unknown status transition: " + string(currentStatus),
+		}
+	}
+
+	return RequestPollResult{
+		Action:    PollActionEmitStatusChange,
+		EventType: eventType,
+		Reason:    "status changed from " + string(prevStatus) + " to " + string(currentStatus),
+	}
+}
+
+// statusToEventType maps a request status to its corresponding event type string.
+// Returns empty string for unknown/unhandled statuses.
+func statusToEventType(status db.RequestStatus) string {
+	switch status {
+	case db.StatusApproved:
+		return "request_approved"
+	case db.StatusRejected:
+		return "request_rejected"
+	case db.StatusExecuted, db.StatusExecutionFailed:
+		return "request_executed"
+	case db.StatusTimeout:
+		return "request_timeout"
+	case db.StatusCancelled:
+		return "request_cancelled"
+	default:
+		return ""
+	}
+}
+
 // pollRequests checks for new or changed requests and emits events.
+// This is the side-effectful wrapper that calls the pure evaluation function.
 func pollRequests(ctx context.Context, dbConn *db.DB, enc *json.Encoder, seen map[string]db.RequestStatus) error {
 	// Get all pending requests for all projects
 	requests, err := dbConn.ListPendingRequestsAllProjects()
@@ -156,12 +244,14 @@ func pollRequests(ctx context.Context, dbConn *db.DB, enc *json.Encoder, seen ma
 	}
 
 	for _, req := range requests {
-		prevStatus, exists := seen[req.ID]
+		// Use pure function for decision logic
+		result := evaluateRequestForPolling(req.ID, req.Status, seen)
 
-		if !exists {
-			// New request
+		switch result.Action {
+		case PollActionEmitNew:
+			// New request - build and emit pending event
 			event := daemon.RequestStreamEvent{
-				Event:     "request_pending",
+				Event:     result.EventType,
 				RequestID: req.ID,
 				RiskTier:  string(req.RiskTier),
 				Command:   req.Command.DisplayRedacted,
@@ -186,31 +276,19 @@ func pollRequests(ctx context.Context, dbConn *db.DB, enc *json.Encoder, seen ma
 					enc.Encode(errEvent)
 				}
 			}
-		} else if prevStatus != req.Status {
-			// Status changed
-			var eventType string
-			switch req.Status {
-			case db.StatusApproved:
-				eventType = "request_approved"
-			case db.StatusRejected:
-				eventType = "request_rejected"
-			case db.StatusExecuted, db.StatusExecutionFailed:
-				eventType = "request_executed"
-			case db.StatusTimeout:
-				eventType = "request_timeout"
-			case db.StatusCancelled:
-				eventType = "request_cancelled"
-			default:
-				continue
-			}
 
+		case PollActionEmitStatusChange:
+			// Status changed - emit status change event
 			event := daemon.RequestStreamEvent{
-				Event:     eventType,
+				Event:     result.EventType,
 				RequestID: req.ID,
 			}
 			if err := enc.Encode(event); err != nil {
 				return fmt.Errorf("encoding event: %w", err)
 			}
+
+		case PollActionSkip:
+			// No action needed
 		}
 
 		seen[req.ID] = req.Status

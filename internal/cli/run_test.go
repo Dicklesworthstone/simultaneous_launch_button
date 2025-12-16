@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Dicklesworthstone/slb/internal/config"
+	"github.com/Dicklesworthstone/slb/internal/db"
 	"github.com/Dicklesworthstone/slb/internal/testutil"
 	"github.com/spf13/cobra"
 )
@@ -234,5 +235,179 @@ func TestToRequestCreatorConfig_WithIntegrations(t *testing.T) {
 	}
 	if result.AgentMailThread != "test-thread" {
 		t.Errorf("expected AgentMailThread=test-thread, got %v", result.AgentMailThread)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// evaluateRequestForExecution Tests
+// -----------------------------------------------------------------------------
+
+func TestEvaluateRequestForExecution_Approved(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusApproved)
+
+	if !result.ShouldExecute {
+		t.Error("expected ShouldExecute=true for approved status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for approved status")
+	}
+	if !strings.Contains(result.Reason, "approved") {
+		t.Errorf("expected Reason to mention 'approved', got %q", result.Reason)
+	}
+}
+
+func TestEvaluateRequestForExecution_Pending(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusPending)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for pending status")
+	}
+	if !result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=true for pending status")
+	}
+	if !strings.Contains(result.Reason, "pending") {
+		t.Errorf("expected Reason to mention 'pending', got %q", result.Reason)
+	}
+}
+
+func TestEvaluateRequestForExecution_Rejected(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusRejected)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for rejected status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for rejected status")
+	}
+	if !strings.Contains(result.Reason, "terminal") {
+		t.Errorf("expected Reason to mention 'terminal', got %q", result.Reason)
+	}
+}
+
+func TestEvaluateRequestForExecution_Timeout(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusTimeout)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for timeout status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for timeout status")
+	}
+	if !strings.Contains(result.Reason, "terminal") {
+		t.Errorf("expected Reason to mention 'terminal', got %q", result.Reason)
+	}
+}
+
+func TestEvaluateRequestForExecution_Cancelled(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusCancelled)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for cancelled status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for cancelled status")
+	}
+}
+
+func TestEvaluateRequestForExecution_ExecutionFailed(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusExecutionFailed)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for execution_failed status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for execution_failed status")
+	}
+}
+
+func TestEvaluateRequestForExecution_Executed(t *testing.T) {
+	result := evaluateRequestForExecution(db.StatusExecuted)
+
+	if result.ShouldExecute {
+		t.Error("expected ShouldExecute=false for executed status")
+	}
+	if result.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false for executed status")
+	}
+}
+
+// TestEvaluateRequestForExecution_AllStatuses is a comprehensive table-driven test
+// covering all possible status values.
+func TestEvaluateRequestForExecution_AllStatuses(t *testing.T) {
+	tests := []struct {
+		name                  string
+		status                db.RequestStatus
+		expectExecute         bool
+		expectContinuePolling bool
+	}{
+		// Happy path
+		{"approved", db.StatusApproved, true, false},
+
+		// Continue polling
+		{"pending", db.StatusPending, false, true},
+
+		// Terminal states - should stop polling
+		{"rejected", db.StatusRejected, false, false},
+		{"timeout", db.StatusTimeout, false, false},
+		{"cancelled", db.StatusCancelled, false, false},
+		{"executed", db.StatusExecuted, false, false},
+		{"execution_failed", db.StatusExecutionFailed, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := evaluateRequestForExecution(tt.status)
+
+			if result.ShouldExecute != tt.expectExecute {
+				t.Errorf("ShouldExecute: expected %v, got %v", tt.expectExecute, result.ShouldExecute)
+			}
+			if result.ShouldContinuePolling != tt.expectContinuePolling {
+				t.Errorf("ShouldContinuePolling: expected %v, got %v", tt.expectContinuePolling, result.ShouldContinuePolling)
+			}
+			if result.Reason == "" {
+				t.Error("Reason should not be empty")
+			}
+		})
+	}
+}
+
+// TestExecutionDecision_StructFields verifies the struct fields exist and are accessible.
+func TestExecutionDecision_StructFields(t *testing.T) {
+	d := ExecutionDecision{
+		ShouldExecute:         true,
+		ShouldContinuePolling: false,
+		Reason:                "test reason",
+	}
+
+	if !d.ShouldExecute {
+		t.Error("expected ShouldExecute=true")
+	}
+	if d.ShouldContinuePolling {
+		t.Error("expected ShouldContinuePolling=false")
+	}
+	if d.Reason != "test reason" {
+		t.Errorf("expected Reason='test reason', got %q", d.Reason)
+	}
+}
+
+// TestEvaluateRequestForExecution_ReasonContainsStatus verifies that the reason
+// includes useful debugging information about the status.
+func TestEvaluateRequestForExecution_ReasonContainsStatus(t *testing.T) {
+	// Test that terminal status reasons include the actual status
+	terminalStatuses := []db.RequestStatus{
+		db.StatusRejected,
+		db.StatusTimeout,
+		db.StatusCancelled,
+		db.StatusExecuted,
+		db.StatusExecutionFailed,
+	}
+
+	for _, status := range terminalStatuses {
+		t.Run(string(status), func(t *testing.T) {
+			result := evaluateRequestForExecution(status)
+			if !strings.Contains(result.Reason, string(status)) {
+				t.Errorf("expected Reason to contain status %q, got %q", status, result.Reason)
+			}
+		})
 	}
 }

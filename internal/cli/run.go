@@ -318,6 +318,48 @@ func createRunLogFile(project, prefix string) (string, error) {
 	return logPath, nil
 }
 
+// ExecutionDecision represents the result of evaluating whether a request
+// should be executed. This is returned by the pure evaluation function for testability.
+type ExecutionDecision struct {
+	ShouldExecute         bool
+	ShouldContinuePolling bool
+	Reason                string
+}
+
+// evaluateRequestForExecution is a pure function that determines what action to take
+// when polling a request for execution. This function should maintain 100% test coverage
+// as it contains the core polling decision logic.
+//
+// Decision rules:
+//   - StatusApproved: Execute the command
+//   - Terminal status (rejected, timeout, cancelled, execution_failed, timed_out): Stop with error
+//   - StatusPending: Continue polling
+func evaluateRequestForExecution(status db.RequestStatus) ExecutionDecision {
+	if status == db.StatusApproved {
+		return ExecutionDecision{
+			ShouldExecute: true,
+			Reason:        "request approved, ready for execution",
+		}
+	}
+
+	// Check for terminal states (db.IsTerminal doesn't include StatusTimeout,
+	// but for execution polling, timeout is definitely terminal)
+	if status.IsTerminal() || status == db.StatusTimeout {
+		return ExecutionDecision{
+			ShouldExecute:         false,
+			ShouldContinuePolling: false,
+			Reason:                "request in terminal state: " + string(status),
+		}
+	}
+
+	// Still pending - continue waiting
+	return ExecutionDecision{
+		ShouldExecute:         false,
+		ShouldContinuePolling: true,
+		Reason:                "request still pending, continue polling",
+	}
+}
+
 // Helpers to adapt config into core types ------------------------------------
 
 func toRateLimitConfig(cfg config.Config) core.RateLimitConfig {

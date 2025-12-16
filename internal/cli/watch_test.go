@@ -259,6 +259,291 @@ func TestShouldAutoApproveCaution_AllCombinations(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// TESTS for evaluateRequestForPolling
+// =============================================================================
+//
+// These tests verify the polling business logic is correct.
+// Every decision branch MUST be tested.
+//
+// Test coverage requirement: 100%
+// =============================================================================
+
+// TestEvaluateRequestForPolling_NewRequest verifies that a request not in the
+// seen map is identified as new and should emit a pending event.
+func TestEvaluateRequestForPolling_NewRequest(t *testing.T) {
+	seen := make(map[string]db.RequestStatus)
+	result := evaluateRequestForPolling("req-123", db.StatusPending, seen)
+
+	if result.Action != PollActionEmitNew {
+		t.Errorf("expected Action=PollActionEmitNew for new request, got %v", result.Action)
+	}
+	if result.EventType != "request_pending" {
+		t.Errorf("expected EventType='request_pending', got %q", result.EventType)
+	}
+	if result.Reason == "" {
+		t.Error("expected non-empty reason")
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusUnchanged verifies that a request with
+// unchanged status is skipped.
+func TestEvaluateRequestForPolling_StatusUnchanged(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusPending, seen)
+
+	if result.Action != PollActionSkip {
+		t.Errorf("expected Action=PollActionSkip for unchanged status, got %v", result.Action)
+	}
+	if result.Reason == "" {
+		t.Error("expected non-empty reason")
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToApproved verifies that a status
+// change to approved emits the correct event.
+func TestEvaluateRequestForPolling_StatusChangedToApproved(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusApproved, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_approved" {
+		t.Errorf("expected EventType='request_approved', got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToRejected verifies rejection events.
+func TestEvaluateRequestForPolling_StatusChangedToRejected(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusRejected, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_rejected" {
+		t.Errorf("expected EventType='request_rejected', got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToExecuted verifies execution events.
+func TestEvaluateRequestForPolling_StatusChangedToExecuted(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusApproved,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusExecuted, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_executed" {
+		t.Errorf("expected EventType='request_executed', got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToExecutionFailed verifies failed execution.
+func TestEvaluateRequestForPolling_StatusChangedToExecutionFailed(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusApproved,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusExecutionFailed, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_executed" {
+		t.Errorf("expected EventType='request_executed' for failed execution, got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToTimeout verifies timeout events.
+func TestEvaluateRequestForPolling_StatusChangedToTimeout(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusTimeout, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_timeout" {
+		t.Errorf("expected EventType='request_timeout', got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_StatusChangedToCancelled verifies cancellation events.
+func TestEvaluateRequestForPolling_StatusChangedToCancelled(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusCancelled, seen)
+
+	if result.Action != PollActionEmitStatusChange {
+		t.Errorf("expected Action=PollActionEmitStatusChange, got %v", result.Action)
+	}
+	if result.EventType != "request_cancelled" {
+		t.Errorf("expected EventType='request_cancelled', got %q", result.EventType)
+	}
+}
+
+// TestEvaluateRequestForPolling_UnknownStatusTransition verifies unknown status is skipped.
+func TestEvaluateRequestForPolling_UnknownStatusTransition(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	// Use an unknown status
+	result := evaluateRequestForPolling("req-123", db.RequestStatus("unknown"), seen)
+
+	if result.Action != PollActionSkip {
+		t.Errorf("expected Action=PollActionSkip for unknown status, got %v", result.Action)
+	}
+	if result.Reason == "" {
+		t.Error("expected non-empty reason for unknown status")
+	}
+}
+
+// TestEvaluateRequestForPolling_ReasonContainsStatusInfo verifies the reason is informative.
+func TestEvaluateRequestForPolling_ReasonContainsStatusInfo(t *testing.T) {
+	seen := map[string]db.RequestStatus{
+		"req-123": db.StatusPending,
+	}
+	result := evaluateRequestForPolling("req-123", db.StatusApproved, seen)
+
+	// Reason should mention the status transition
+	if !contains(result.Reason, "pending") || !contains(result.Reason, "approved") {
+		t.Errorf("expected reason to mention status transition, got: %s", result.Reason)
+	}
+}
+
+// =============================================================================
+// TESTS for statusToEventType
+// =============================================================================
+
+// TestStatusToEventType_AllStatuses tests all status to event type mappings.
+func TestStatusToEventType_AllStatuses(t *testing.T) {
+	tests := []struct {
+		status   db.RequestStatus
+		expected string
+	}{
+		{db.StatusApproved, "request_approved"},
+		{db.StatusRejected, "request_rejected"},
+		{db.StatusExecuted, "request_executed"},
+		{db.StatusExecutionFailed, "request_executed"},
+		{db.StatusTimeout, "request_timeout"},
+		{db.StatusCancelled, "request_cancelled"},
+		{db.StatusPending, ""},              // Pending is not a status change event
+		{db.RequestStatus("unknown"), ""},   // Unknown status returns empty
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.status), func(t *testing.T) {
+			result := statusToEventType(tt.status)
+			if result != tt.expected {
+				t.Errorf("statusToEventType(%s) = %q, want %q", tt.status, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestPollAction_Constants verifies the PollAction constants are defined correctly.
+func TestPollAction_Constants(t *testing.T) {
+	// Verify the constants have distinct non-empty values
+	if PollActionEmitNew == "" {
+		t.Error("PollActionEmitNew should not be empty")
+	}
+	if PollActionEmitStatusChange == "" {
+		t.Error("PollActionEmitStatusChange should not be empty")
+	}
+	if PollActionSkip == "" {
+		t.Error("PollActionSkip should not be empty")
+	}
+	if PollActionEmitNew == PollActionEmitStatusChange {
+		t.Error("PollActionEmitNew and PollActionEmitStatusChange should be different")
+	}
+	if PollActionEmitNew == PollActionSkip {
+		t.Error("PollActionEmitNew and PollActionSkip should be different")
+	}
+}
+
+// TestRequestPollResult_StructFields verifies the struct can be initialized.
+func TestRequestPollResult_StructFields(t *testing.T) {
+	r := RequestPollResult{
+		Action:    PollActionEmitNew,
+		EventType: "request_pending",
+		Reason:    "test reason",
+	}
+
+	if r.Action != PollActionEmitNew {
+		t.Error("expected Action=PollActionEmitNew")
+	}
+	if r.EventType != "request_pending" {
+		t.Errorf("expected EventType='request_pending', got %q", r.EventType)
+	}
+	if r.Reason != "test reason" {
+		t.Errorf("expected Reason='test reason', got %q", r.Reason)
+	}
+}
+
+// =============================================================================
+// Table-driven comprehensive test for evaluateRequestForPolling
+// =============================================================================
+
+// TestEvaluateRequestForPolling_AllStatusTransitions tests all possible status
+// transitions to ensure correct event types are generated.
+func TestEvaluateRequestForPolling_AllStatusTransitions(t *testing.T) {
+	statuses := []db.RequestStatus{
+		db.StatusPending,
+		db.StatusApproved,
+		db.StatusRejected,
+		db.StatusExecuted,
+		db.StatusExecutionFailed,
+		db.StatusTimeout,
+		db.StatusCancelled,
+	}
+
+	for _, prevStatus := range statuses {
+		for _, newStatus := range statuses {
+			if prevStatus == newStatus {
+				continue // Skip unchanged
+			}
+			t.Run(string(prevStatus)+"_to_"+string(newStatus), func(t *testing.T) {
+				seen := map[string]db.RequestStatus{
+					"req-test": prevStatus,
+				}
+				result := evaluateRequestForPolling("req-test", newStatus, seen)
+
+				expectedEventType := statusToEventType(newStatus)
+				if expectedEventType == "" {
+					// Unknown status should skip
+					if result.Action != PollActionSkip {
+						t.Errorf("expected PollActionSkip for unknown status %s, got %v", newStatus, result.Action)
+					}
+				} else {
+					// Known status should emit event
+					if result.Action != PollActionEmitStatusChange {
+						t.Errorf("expected PollActionEmitStatusChange for %s->%s, got %v", prevStatus, newStatus, result.Action)
+					}
+					if result.EventType != expectedEventType {
+						t.Errorf("expected EventType=%q, got %q", expectedEventType, result.EventType)
+					}
+				}
+
+				// Reason should never be empty
+				if result.Reason == "" {
+					t.Error("reason should not be empty")
+				}
+			})
+		}
+	}
+}
+
 // contains is a helper function to check if a string contains a substring.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
