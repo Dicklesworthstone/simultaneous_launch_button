@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/Dicklesworthstone/slb/internal/daemon"
 	"github.com/Dicklesworthstone/slb/internal/db"
 )
 
@@ -558,3 +563,360 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// =============================================================================
+// INTEGRATION TESTS for pollRequests
+// =============================================================================
+//
+// These tests verify the side-effectful polling logic works correctly
+// with a real database.
+// =============================================================================
+
+func TestPollRequests_EmitsNewRequest(t *testing.T) {
+	// Create test database
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	dbConn, err := db.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer dbConn.Close()
+
+	// Create a session first (required for foreign key)
+	session := &db.Session{
+		ID:          "test-session-123",
+		AgentName:   "test-agent",
+		Program:     "test",
+		Model:       "test",
+		ProjectPath: tmpDir,
+		StartedAt:   time.Now(),
+	}
+	if err := dbConn.CreateSession(session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Create a pending request
+	request := &db.Request{
+		ID:                 "req-poll-test-1",
+		RequestorSessionID: session.ID,
+		Status:             db.StatusPending,
+		RiskTier:           db.RiskTierCaution,
+		MinApprovals:       1,
+		RequestorAgent:     "test-agent",
+		Command: db.CommandSpec{
+			Raw:  "echo test",
+			Hash: "abc123",
+		},
+		ProjectPath: tmpDir,
+		CreatedAt:   time.Now(),
+	}
+	if err := dbConn.CreateRequest(request); err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	// Set up encoder to capture output
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	seen := make(map[string]db.RequestStatus)
+
+	// Call pollRequests
+	ctx := context.Background()
+	if err := pollRequests(ctx, dbConn, enc, seen); err != nil {
+		t.Fatalf("pollRequests failed: %v", err)
+	}
+
+	// Verify event was emitted
+	output := buf.String()
+	if output == "" {
+		t.Fatal("expected output from pollRequests, got empty")
+	}
+
+	// Parse the output
+	var event daemon.RequestStreamEvent
+	if err := json.Unmarshal([]byte(output), &event); err != nil {
+		t.Fatalf("failed to parse event: %v (output: %s)", err, output)
+	}
+
+	if event.Event != "request_pending" {
+		t.Errorf("expected event='request_pending', got %q", event.Event)
+	}
+	if event.RequestID != request.ID {
+		t.Errorf("expected request_id=%q, got %q", request.ID, event.RequestID)
+	}
+	if event.RiskTier != "caution" {
+		t.Errorf("expected risk_tier='caution', got %q", event.RiskTier)
+	}
+
+	// Verify request was added to seen map
+	if _, ok := seen[request.ID]; !ok {
+		t.Error("request should be in seen map after polling")
+	}
+}
+
+func TestPollRequests_SkipsSeenRequest(t *testing.T) {
+	// Create test database
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	dbConn, err := db.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer dbConn.Close()
+
+	// Create a session
+	session := &db.Session{
+		ID:          "test-session-skip",
+		AgentName:   "test-agent",
+		Program:     "test",
+		Model:       "test",
+		ProjectPath: tmpDir,
+		StartedAt:   time.Now(),
+	}
+	if err := dbConn.CreateSession(session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Create a pending request
+	request := &db.Request{
+		ID:                 "req-poll-skip-1",
+		RequestorSessionID: session.ID,
+		Status:             db.StatusPending,
+		RiskTier:           db.RiskTierCaution,
+		MinApprovals:       1,
+		RequestorAgent:     "test-agent",
+		Command: db.CommandSpec{
+			Raw:  "echo test",
+			Hash: "def456",
+		},
+		ProjectPath: tmpDir,
+		CreatedAt:   time.Now(),
+	}
+	if err := dbConn.CreateRequest(request); err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	// Pre-populate seen map
+	seen := map[string]db.RequestStatus{
+		request.ID: db.StatusPending,
+	}
+
+	// Set up encoder to capture output
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+
+	// Call pollRequests
+	ctx := context.Background()
+	if err := pollRequests(ctx, dbConn, enc, seen); err != nil {
+		t.Fatalf("pollRequests failed: %v", err)
+	}
+
+	// Verify NO event was emitted (request already seen with same status)
+	output := buf.String()
+	if output != "" {
+		t.Errorf("expected no output for already-seen request, got: %s", output)
+	}
+}
+
+func TestPollRequests_MultipleRequests(t *testing.T) {
+	// Create test database
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	dbConn, err := db.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer dbConn.Close()
+
+	// Create a session
+	session := &db.Session{
+		ID:          "test-session-multi",
+		AgentName:   "test-agent",
+		Program:     "test",
+		Model:       "test",
+		ProjectPath: tmpDir,
+		StartedAt:   time.Now(),
+	}
+	if err := dbConn.CreateSession(session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Create two pending requests
+	request1 := &db.Request{
+		ID:                 "req-multi-1",
+		RequestorSessionID: session.ID,
+		Status:             db.StatusPending,
+		RiskTier:           db.RiskTierCaution,
+		MinApprovals:       1,
+		RequestorAgent:     "test-agent",
+		Command: db.CommandSpec{
+			Raw:  "echo first",
+			Hash: "hash1",
+		},
+		ProjectPath: tmpDir,
+		CreatedAt:   time.Now(),
+	}
+	request2 := &db.Request{
+		ID:                 "req-multi-2",
+		RequestorSessionID: session.ID,
+		Status:             db.StatusPending,
+		RiskTier:           db.RiskTierDangerous,
+		MinApprovals:       2,
+		RequestorAgent:     "test-agent",
+		Command: db.CommandSpec{
+			Raw:  "rm -rf /tmp",
+			Hash: "hash2",
+		},
+		ProjectPath: tmpDir,
+		CreatedAt:   time.Now(),
+	}
+	if err := dbConn.CreateRequest(request1); err != nil {
+		t.Fatalf("failed to create request1: %v", err)
+	}
+	if err := dbConn.CreateRequest(request2); err != nil {
+		t.Fatalf("failed to create request2: %v", err)
+	}
+
+	// Pre-populate seen map with request1 only
+	seen := map[string]db.RequestStatus{
+		request1.ID: db.StatusPending,
+	}
+
+	// Set up encoder to capture output
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+
+	// Call pollRequests
+	ctx := context.Background()
+	if err := pollRequests(ctx, dbConn, enc, seen); err != nil {
+		t.Fatalf("pollRequests failed: %v", err)
+	}
+
+	// Should only emit event for request2 (request1 is already seen)
+	output := buf.String()
+	if output == "" {
+		t.Fatal("expected output for new request, got empty")
+	}
+
+	var event daemon.RequestStreamEvent
+	if err := json.Unmarshal([]byte(output), &event); err != nil {
+		t.Fatalf("failed to parse event: %v", err)
+	}
+
+	// Should be request2 (the new one)
+	if event.RequestID != request2.ID {
+		t.Errorf("expected request_id=%q (the new one), got %q", request2.ID, event.RequestID)
+	}
+	if event.RiskTier != "dangerous" {
+		t.Errorf("expected risk_tier='dangerous', got %q", event.RiskTier)
+	}
+
+	// Both should be in seen map now
+	if _, ok := seen[request1.ID]; !ok {
+		t.Error("request1 should still be in seen map")
+	}
+	if _, ok := seen[request2.ID]; !ok {
+		t.Error("request2 should be added to seen map")
+	}
+}
+
+func TestPollRequests_DatabaseError(t *testing.T) {
+	// Create test database then close it to cause error
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	dbConn, err := db.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	dbConn.Close() // Close to cause error on query
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	seen := make(map[string]db.RequestStatus)
+
+	ctx := context.Background()
+	err = pollRequests(ctx, dbConn, enc, seen)
+	if err == nil {
+		t.Error("expected error when database is closed")
+	}
+}
+
+func TestPollRequests_UsesDisplayRedacted(t *testing.T) {
+	// Create test database
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	dbConn, err := db.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer dbConn.Close()
+
+	session := &db.Session{
+		ID:          "test-session-redact",
+		AgentName:   "test-agent",
+		Program:     "test",
+		Model:       "test",
+		ProjectPath: tmpDir,
+		StartedAt:   time.Now(),
+	}
+	if err := dbConn.CreateSession(session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Create request with redacted display
+	request := &db.Request{
+		ID:                 "req-redacted-1",
+		RequestorSessionID: session.ID,
+		Status:             db.StatusPending,
+		RiskTier:           db.RiskTierCaution,
+		MinApprovals:       1,
+		RequestorAgent:     "test-agent",
+		Command: db.CommandSpec{
+			Raw:             "curl -H 'Authorization: Bearer secret123' https://api.example.com",
+			DisplayRedacted: "curl -H 'Authorization: [REDACTED]' https://api.example.com",
+			Hash:            "redacted123",
+		},
+		ProjectPath: tmpDir,
+		CreatedAt:   time.Now(),
+	}
+	if err := dbConn.CreateRequest(request); err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	seen := make(map[string]db.RequestStatus)
+
+	ctx := context.Background()
+	if err := pollRequests(ctx, dbConn, enc, seen); err != nil {
+		t.Fatalf("pollRequests failed: %v", err)
+	}
+
+	var event daemon.RequestStreamEvent
+	if err := json.Unmarshal([]byte(buf.String()), &event); err != nil {
+		t.Fatalf("failed to parse event: %v", err)
+	}
+
+	// Should use redacted display command, not raw
+	if event.Command != request.Command.DisplayRedacted {
+		t.Errorf("expected command to be redacted %q, got %q", request.Command.DisplayRedacted, event.Command)
+	}
+}
+
+// =============================================================================
+// NOTE: autoApproveCaution integration tests
+// =============================================================================
+//
+// The autoApproveCaution function requires complex setup with global state
+// (flagDB, flagWatchSessionID) which makes it difficult to test in isolation.
+//
+// The critical safety logic is in shouldAutoApproveCaution (100% coverage above).
+// The autoApproveCaution function is a thin wrapper that:
+// 1. Opens database connection
+// 2. Gets request
+// 3. Calls shouldAutoApproveCaution (fully tested)
+// 4. Creates review if approved
+// 5. Updates status if threshold met
+//
+// Integration testing this would require refactoring to accept dependencies
+// as parameters rather than using global state. This is deferred to future work.
+// =============================================================================
