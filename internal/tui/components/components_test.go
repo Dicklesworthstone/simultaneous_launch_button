@@ -417,6 +417,15 @@ func TestStatusBadgeRenderNoIcon(t *testing.T) {
 	}
 }
 
+func TestStatusBadgeRenderCompactNoIcon(t *testing.T) {
+	badge := NewStatusBadge("approved").AsCompact().WithIcon(false)
+	result := badge.Render()
+	if result == "" {
+		t.Error("Render returned empty string")
+	}
+	// Compact with no icon should show first letter only
+}
+
 func TestRenderStatusBadge(t *testing.T) {
 	result := RenderStatusBadge("pending")
 	if result == "" {
