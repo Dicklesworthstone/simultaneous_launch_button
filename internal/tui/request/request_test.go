@@ -447,6 +447,23 @@ func TestDetailModelViewWithAttachments(t *testing.T) {
 	}
 }
 
+func TestDetailModelViewWithLongAttachment(t *testing.T) {
+	req := testRequest()
+	// Create attachment with content > 100 characters to test truncation
+	longContent := strings.Repeat("x", 150)
+	req.Attachments = []db.Attachment{
+		{Type: db.AttachmentTypeFile, Content: longContent},
+	}
+
+	m := NewDetailModel(req, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := m.View()
+	if view == "" {
+		t.Error("View should not be empty with long attachment")
+	}
+}
+
 func TestDetailModelViewWithExecution(t *testing.T) {
 	req := testRequest()
 	req.Status = db.StatusExecuted
@@ -1090,6 +1107,19 @@ func TestRenderFooterWithCopied(t *testing.T) {
 	// When copied is true, the footer should show "Copied!" instead of [c]opy
 	if !strings.Contains(view, "Copied!") {
 		t.Error("Footer should show 'Copied!' when copied flag is true")
+	}
+}
+
+func TestDetailModelViewWithDisplayRedacted(t *testing.T) {
+	req := testRequest()
+	req.Command.DisplayRedacted = "rm -rf [REDACTED]"
+
+	m := NewDetailModel(req, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := m.View()
+	if view == "" {
+		t.Error("View should not be empty with redacted command")
 	}
 }
 
