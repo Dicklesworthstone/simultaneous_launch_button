@@ -372,3 +372,212 @@ func TestCompoundCommandMatchedSegments(t *testing.T) {
 		t.Fatalf("expected at least one dangerous segment match, got: %+v", res.MatchedSegments)
 	}
 }
+
+func TestUpgradeTier(t *testing.T) {
+	tests := []struct {
+		name string
+		in   RiskTier
+		want RiskTier
+	}{
+		{"critical stays critical", RiskTierCritical, RiskTierCritical},
+		{"dangerous upgrades to critical", RiskTierDangerous, RiskTierCritical},
+		{"caution upgrades to dangerous", RiskTierCaution, RiskTierDangerous},
+		{"safe upgrades to caution", RiskTier(RiskSafe), RiskTierCaution},
+		{"unknown defaults to caution", RiskTier("unknown"), RiskTierCaution},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := upgradeTier(tc.in)
+			if got != tc.want {
+				t.Errorf("upgradeTier(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPatternEngineAddAndRemovePattern(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("add pattern to critical tier", func(t *testing.T) {
+		err := engine.AddPattern(RiskTierCritical, "my-critical-pattern", "Test critical", "test")
+		if err != nil {
+			t.Fatalf("AddPattern failed: %v", err)
+		}
+
+		patterns := engine.ListPatterns(RiskTierCritical)
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "my-critical-pattern" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Pattern not found after adding")
+		}
+	})
+
+	t.Run("add pattern to dangerous tier", func(t *testing.T) {
+		err := engine.AddPattern(RiskTierDangerous, "my-dangerous-pattern", "Test dangerous", "test")
+		if err != nil {
+			t.Fatalf("AddPattern failed: %v", err)
+		}
+
+		patterns := engine.ListPatterns(RiskTierDangerous)
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "my-dangerous-pattern" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Pattern not found after adding")
+		}
+	})
+
+	t.Run("add pattern to caution tier", func(t *testing.T) {
+		err := engine.AddPattern(RiskTierCaution, "my-caution-pattern", "Test caution", "test")
+		if err != nil {
+			t.Fatalf("AddPattern failed: %v", err)
+		}
+
+		patterns := engine.ListPatterns(RiskTierCaution)
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "my-caution-pattern" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Pattern not found after adding")
+		}
+	})
+
+	t.Run("add pattern to safe tier (default)", func(t *testing.T) {
+		err := engine.AddPattern(RiskTier(RiskSafe), "my-safe-pattern", "Test safe", "test")
+		if err != nil {
+			t.Fatalf("AddPattern failed: %v", err)
+		}
+
+		patterns := engine.ListPatterns(RiskTier(RiskSafe))
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "my-safe-pattern" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Pattern not found after adding")
+		}
+	})
+
+	t.Run("add invalid regex pattern", func(t *testing.T) {
+		err := engine.AddPattern(RiskTierCritical, "[invalid", "Invalid regex", "test")
+		if err == nil {
+			t.Error("Expected error for invalid regex pattern")
+		}
+	})
+
+	t.Run("remove existing pattern", func(t *testing.T) {
+		removed := engine.RemovePattern(RiskTierCritical, "my-critical-pattern")
+		if !removed {
+			t.Error("RemovePattern returned false for existing pattern")
+		}
+
+		patterns := engine.ListPatterns(RiskTierCritical)
+		for _, p := range patterns {
+			if p.Pattern == "my-critical-pattern" {
+				t.Error("Pattern still exists after removal")
+			}
+		}
+	})
+
+	t.Run("remove non-existent pattern", func(t *testing.T) {
+		removed := engine.RemovePattern(RiskTierCritical, "non-existent-pattern")
+		if removed {
+			t.Error("RemovePattern returned true for non-existent pattern")
+		}
+	})
+
+	t.Run("remove from different tiers", func(t *testing.T) {
+		// Remove from dangerous tier
+		removed := engine.RemovePattern(RiskTierDangerous, "my-dangerous-pattern")
+		if !removed {
+			t.Error("RemovePattern failed for dangerous tier")
+		}
+
+		// Remove from caution tier
+		removed = engine.RemovePattern(RiskTierCaution, "my-caution-pattern")
+		if !removed {
+			t.Error("RemovePattern failed for caution tier")
+		}
+
+		// Remove from safe tier
+		removed = engine.RemovePattern(RiskTier(RiskSafe), "my-safe-pattern")
+		if !removed {
+			t.Error("RemovePattern failed for safe tier")
+		}
+	})
+}
+
+func TestPatternEngineAllPatterns(t *testing.T) {
+	engine := NewPatternEngine()
+
+	all := engine.AllPatterns()
+	if all == nil {
+		t.Fatal("AllPatterns returned nil")
+	}
+
+	// Check that all expected keys exist
+	for _, key := range []string{"safe", "critical", "dangerous", "caution"} {
+		if _, ok := all[key]; !ok {
+			t.Errorf("AllPatterns missing key %q", key)
+		}
+	}
+}
+
+func TestConvenienceFunctions(t *testing.T) {
+	t.Run("Classify uses default engine", func(t *testing.T) {
+		result := Classify("rm -rf /etc", "")
+		if result == nil {
+			t.Fatal("Classify returned nil")
+		}
+		if result.Tier != RiskTierCritical {
+			t.Errorf("Classify tier = %q, want %q", result.Tier, RiskTierCritical)
+		}
+	})
+
+	t.Run("TestPattern detects dangerous commands", func(t *testing.T) {
+		if !TestPattern("rm -rf /") {
+			t.Error("TestPattern should return true for 'rm -rf /'")
+		}
+		if TestPattern("ls -la") {
+			t.Error("TestPattern should return false for 'ls -la'")
+		}
+	})
+
+	t.Run("MatchesPattern checks specific pattern", func(t *testing.T) {
+		if !MatchesPattern("rm -rf /tmp", `rm\s+-rf`) {
+			t.Error("MatchesPattern should match 'rm -rf'")
+		}
+		if MatchesPattern("ls -la", `rm\s+-rf`) {
+			t.Error("MatchesPattern should not match 'ls -la' against rm pattern")
+		}
+	})
+
+	t.Run("MatchesPattern handles invalid regex", func(t *testing.T) {
+		if MatchesPattern("anything", "[invalid") {
+			t.Error("MatchesPattern should return false for invalid regex")
+		}
+	})
+
+	t.Run("MatchesPattern trims whitespace", func(t *testing.T) {
+		if !MatchesPattern("  rm -rf /tmp  ", `rm\s+-rf`) {
+			t.Error("MatchesPattern should handle leading/trailing whitespace")
+		}
+	})
+}
