@@ -778,6 +778,25 @@ func TestRejectModelUpdateSubmitWithoutReason(t *testing.T) {
 	}
 }
 
+func TestRejectModelUpdateSubmitWithReason(t *testing.T) {
+	m := NewRejectModel(testRequest())
+	m.Width = 80
+	m.reasonInput.SetValue("This command is unsafe")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model := updated.(*RejectModel)
+
+	if !model.Submitted {
+		t.Error("Submitted should be true when reason is provided")
+	}
+	if model.Reason != "This command is unsafe" {
+		t.Errorf("Reason should be set, got %q", model.Reason)
+	}
+	if model.showError {
+		t.Error("showError should be false when reason is provided")
+	}
+}
+
 func TestRejectModelUpdateCancel(t *testing.T) {
 	m := NewRejectModel(testRequest())
 
