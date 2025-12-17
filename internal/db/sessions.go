@@ -354,13 +354,19 @@ func scanSessions(rows *sql.Rows) ([]*Session, error) {
 
 
 // isUniqueConstraintError checks if the error is a unique constraint violation.
+// Note: We explicitly exclude FOREIGN KEY errors which also contain "constraint failed".
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
 	}
+	errStr := err.Error()
+	// Exclude FOREIGN KEY errors - they also contain "constraint failed" but are not unique violations
+	if containsIgnoreCase(errStr, "FOREIGN KEY") {
+		return false
+	}
 	// modernc.org/sqlite returns errors containing this message
-	return containsIgnoreCase(err.Error(), "UNIQUE constraint failed") ||
-		containsIgnoreCase(err.Error(), "constraint failed")
+	return containsIgnoreCase(errStr, "UNIQUE constraint failed") ||
+		containsIgnoreCase(errStr, "constraint failed")
 }
 
 // containsIgnoreCase checks if s contains substr (case-insensitive).

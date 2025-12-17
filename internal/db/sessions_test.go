@@ -557,6 +557,111 @@ func TestIsUniqueConstraintError_Nil(t *testing.T) {
 	}
 }
 
+func TestIsUniqueConstraintError_UniqueViolation(t *testing.T) {
+	// Test that UNIQUE constraint violations are correctly identified
+	tests := []struct {
+		name     string
+		errMsg   string
+		expected bool
+	}{
+		{
+			name:     "exact unique constraint",
+			errMsg:   "UNIQUE constraint failed: sessions.id",
+			expected: true,
+		},
+		{
+			name:     "lowercase unique constraint",
+			errMsg:   "unique constraint failed: reviews.request_id",
+			expected: true,
+		},
+		{
+			name:     "generic constraint failed",
+			errMsg:   "constraint failed: some_table.some_column",
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &testError{msg: tc.errMsg}
+			if got := isUniqueConstraintError(err); got != tc.expected {
+				t.Errorf("isUniqueConstraintError(%q) = %v, want %v", tc.errMsg, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestIsUniqueConstraintError_ForeignKeyNotUnique(t *testing.T) {
+	// CRITICAL: Foreign key errors should NOT be classified as unique constraint errors
+	// This bug was causing confusing error messages like "review already exists" when
+	// the actual problem was a missing session (FK violation)
+	tests := []struct {
+		name   string
+		errMsg string
+	}{
+		{
+			name:   "foreign key constraint failed",
+			errMsg: "constraint failed: FOREIGN KEY constraint failed (787)",
+		},
+		{
+			name:   "lowercase foreign key",
+			errMsg: "foreign key constraint failed: reviews.reviewer_session_id",
+		},
+		{
+			name:   "mixed case foreign key",
+			errMsg: "FOREIGN KEY constraint failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &testError{msg: tc.errMsg}
+			if isUniqueConstraintError(err) {
+				t.Errorf("isUniqueConstraintError(%q) = true, want false (FK errors are not unique violations)", tc.errMsg)
+			}
+		})
+	}
+}
+
+func TestIsUniqueConstraintError_OtherErrors(t *testing.T) {
+	// Test that other errors are not classified as unique constraint errors
+	tests := []struct {
+		name   string
+		errMsg string
+	}{
+		{
+			name:   "generic error",
+			errMsg: "something went wrong",
+		},
+		{
+			name:   "database locked",
+			errMsg: "database is locked",
+		},
+		{
+			name:   "no rows",
+			errMsg: "sql: no rows in result set",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &testError{msg: tc.errMsg}
+			if isUniqueConstraintError(err) {
+				t.Errorf("isUniqueConstraintError(%q) = true, want false", tc.errMsg)
+			}
+		})
+	}
+}
+
+// testError is a simple error type for testing
+type testError struct {
+	msg string
+}
+
+func (e *testError) Error() string {
+	return e.msg
+}
+
 func TestScanSessions_BadRows(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
