@@ -80,3 +80,29 @@ func TestNormalizeCommandEnvAssignments(t *testing.T) {
 		t.Fatalf("StrippedWrappers=%v, want prefix [env ...]", res.StrippedWrappers)
 	}
 }
+
+func TestExtractCommandName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple command", "ls -la", "ls"},
+		{"full path", "/usr/bin/git status", "git"},
+		{"relative path", "./script.sh --help", "script.sh"},
+		{"empty string", "", ""},
+		{"whitespace only", "   ", ""},
+		{"command with leading whitespace", "  rm -rf /tmp", "rm"},
+		{"command with many args", "docker run -it --rm ubuntu bash", "docker"},
+		{"path without spaces", "/opt/local/bin/python3 script.py", "python3"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractCommandName(tc.input)
+			if result != tc.expected {
+				t.Errorf("ExtractCommandName(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
