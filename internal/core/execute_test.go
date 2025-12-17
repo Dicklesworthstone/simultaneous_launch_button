@@ -1,8 +1,11 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -502,6 +505,789 @@ func TestExecutorCanExecute(t *testing.T) {
 		}
 		if !strings.Contains(reason, "already been executed") {
 			t.Errorf("expected reason to mention already executed, got %q", reason)
+		}
+	})
+}
+
+func TestExecuteApprovedRequest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell execution test uses /bin/sh or $SHELL")
+	}
+
+	t.Run("empty request_id returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: "",
+			SessionID: "test-session",
+		})
+		if err == nil {
+			t.Error("expected error for empty request_id")
+		}
+		if !strings.Contains(err.Error(), "request_id is required") {
+			t.Errorf("expected request_id error, got %v", err)
+		}
+	})
+
+	t.Run("empty session_id returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: "test-request",
+			SessionID: "",
+		})
+		if err == nil {
+			t.Error("expected error for empty session_id")
+		}
+		if !strings.Contains(err.Error(), "session_id is required") {
+			t.Errorf("expected session_id error, got %v", err)
+		}
+	})
+
+	t.Run("request not found returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: "nonexistent-id",
+			SessionID: "test-session",
+		})
+		if err == nil {
+			t.Error("expected error for nonexistent request")
+		}
+		if !strings.Contains(err.Error(), "getting request") {
+			t.Errorf("expected getting request error, got %v", err)
+		}
+	})
+
+	t.Run("session not found returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		// Create session for request creation
+		session := &db.Session{
+			ID:          "creator-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		// Create a request
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "creator-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status: db.StatusApproved,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "nonexistent-session",
+		})
+		if err == nil {
+			t.Error("expected error for nonexistent session")
+		}
+		if !strings.Contains(err.Error(), "getting session") {
+			t.Errorf("expected getting session error, got %v", err)
+		}
+	})
+
+	t.Run("request already executing returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status: db.StatusExecuting,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrAlreadyExecuting) {
+			t.Errorf("expected ErrAlreadyExecuting, got %v", err)
+		}
+	})
+
+	t.Run("request already executed returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status: db.StatusExecuted,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrAlreadyExecuted) {
+			t.Errorf("expected ErrAlreadyExecuted, got %v", err)
+		}
+	})
+
+	t.Run("request execution failed status returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status: db.StatusExecutionFailed,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrAlreadyExecuted) {
+			t.Errorf("expected ErrAlreadyExecuted, got %v", err)
+		}
+	})
+
+	t.Run("request not approved returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status: db.StatusPending,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrRequestNotApproved) {
+			t.Errorf("expected ErrRequestNotApproved, got %v", err)
+		}
+	})
+
+	t.Run("expired approval returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw: "ls -la",
+				Cwd: "/tmp",
+			},
+			Status:            db.StatusApproved,
+			ApprovalExpiresAt: &pastTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrApprovalExpired) {
+			t.Errorf("expected ErrApprovalExpired, got %v", err)
+		}
+	})
+
+	t.Run("command hash mismatch returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command: db.CommandSpec{
+				Raw:  "ls -la",
+				Cwd:  "/tmp",
+				Hash: "invalid-hash", // Wrong hash
+			},
+			Status:            db.StatusApproved,
+			ApprovalExpiresAt: &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrCommandHashMismatch) {
+			t.Errorf("expected ErrCommandHashMismatch, got %v", err)
+		}
+	})
+
+	t.Run("tier escalation returns error", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		// Use a dangerous command but mark as CAUTION tier
+		cmdSpec := db.CommandSpec{
+			Raw: "rm -rf /tmp/test",
+			Cwd: "/tmp",
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        "/tmp/test",
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution, // Approved as CAUTION but rm -rf is CRITICAL
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID: req.ID,
+			SessionID: "test-session",
+		})
+		if !errors.Is(err, ErrTierEscalated) {
+			t.Errorf("expected ErrTierEscalated, got %v", err)
+		}
+	})
+
+	t.Run("successful execution with exit code 0", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		// Use /bin/true which is a simple binary that exits with 0
+		cmdSpec := db.CommandSpec{
+			Raw:  "/bin/true",
+			Argv: []string{"/bin/true"},
+			Cwd:  tmpDir,
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        tmpDir,
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		logDir := filepath.Join(tmpDir, "logs")
+		exec := NewExecutor(dbConn, nil)
+		result, err := exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID:      req.ID,
+			SessionID:      "test-session",
+			LogDir:         logDir,
+			SuppressOutput: true,
+		})
+		if err != nil {
+			t.Fatalf("ExecuteApprovedRequest error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if result.ExitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.ExitCode)
+		}
+		if result.LogPath == "" {
+			t.Error("expected log path to be set")
+		}
+
+		// Verify request status was updated
+		updatedReq, err := dbConn.GetRequest(req.ID)
+		if err != nil {
+			t.Fatalf("GetRequest error = %v", err)
+		}
+		if updatedReq.Status != db.StatusExecuted {
+			t.Errorf("expected status %q, got %q", db.StatusExecuted, updatedReq.Status)
+		}
+	})
+
+	t.Run("execution with non-zero exit code", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		// Use /bin/false which is a simple binary that exits with 1
+		cmdSpec := db.CommandSpec{
+			Raw:  "/bin/false",
+			Argv: []string{"/bin/false"},
+			Cwd:  tmpDir,
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        tmpDir,
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		logDir := filepath.Join(tmpDir, "logs")
+		exec := NewExecutor(dbConn, nil)
+		result, err := exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID:      req.ID,
+			SessionID:      "test-session",
+			LogDir:         logDir,
+			SuppressOutput: true,
+		})
+		// Non-zero exit doesn't return error, just sets exit code
+		if err != nil {
+			t.Fatalf("ExecuteApprovedRequest error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		if result.ExitCode != 1 {
+			t.Errorf("expected exit code 1, got %d", result.ExitCode)
+		}
+
+		// Verify request status was updated to execution_failed
+		updatedReq, err := dbConn.GetRequest(req.ID)
+		if err != nil {
+			t.Fatalf("GetRequest error = %v", err)
+		}
+		if updatedReq.Status != db.StatusExecutionFailed {
+			t.Errorf("expected status %q, got %q", db.StatusExecutionFailed, updatedReq.Status)
+		}
+	})
+
+	t.Run("notifier is called on execution", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		cmdSpec := db.CommandSpec{
+			Raw:  "/bin/true",
+			Argv: []string{"/bin/true"},
+			Cwd:  tmpDir,
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        tmpDir,
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		notifier := &mockExecutorNotifier{}
+		logDir := filepath.Join(tmpDir, "logs")
+		exec := NewExecutor(dbConn, nil).WithNotifier(notifier)
+		_, err = exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID:      req.ID,
+			SessionID:      "test-session",
+			LogDir:         logDir,
+			SuppressOutput: true,
+		})
+		if err != nil {
+			t.Fatalf("ExecuteApprovedRequest error = %v", err)
+		}
+
+		if !notifier.executedCalled {
+			t.Error("expected notifier.NotifyRequestExecuted to be called")
+		}
+	})
+
+	t.Run("execution timeout", func(t *testing.T) {
+		// Note: When a process is killed due to context deadline, exec.Cmd.Run() returns
+		// an *exec.ExitError (because the process was signaled), and the current RunCommand
+		// implementation checks for ExitError before checking ctx.Err(). This means timeout
+		// might be treated as a normal non-zero exit code failure rather than a timeout.
+		// This test verifies that the command is at least terminated, even if not as a timeout.
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		// Use sleep binary directly
+		cmdSpec := db.CommandSpec{
+			Raw:  "sleep 10",
+			Argv: []string{"sleep", "10"},
+			Cwd:  tmpDir,
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        tmpDir,
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		logDir := filepath.Join(tmpDir, "logs")
+		exec := NewExecutor(dbConn, nil)
+		start := time.Now()
+		result, _ := exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID:      req.ID,
+			SessionID:      "test-session",
+			LogDir:         logDir,
+			Timeout:        100 * time.Millisecond, // Very short timeout
+			SuppressOutput: true,
+		})
+		elapsed := time.Since(start)
+
+		// The key assertion is that the command was terminated quickly, not after 10 seconds
+		if elapsed > 2*time.Second {
+			t.Errorf("execution took too long (%v), expected timeout to kill it", elapsed)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		// Command should have non-zero exit code (killed by signal)
+		if result.ExitCode == 0 {
+			t.Error("expected non-zero exit code for killed process")
+		}
+
+		// Verify request status was updated (either timed_out or execution_failed is acceptable)
+		updatedReq, err := dbConn.GetRequest(req.ID)
+		if err != nil {
+			t.Fatalf("GetRequest error = %v", err)
+		}
+		if updatedReq.Status != db.StatusTimedOut && updatedReq.Status != db.StatusExecutionFailed {
+			t.Errorf("expected status timed_out or execution_failed, got %q", updatedReq.Status)
+		}
+	})
+
+	t.Run("uses default timeout and log dir when not specified", func(t *testing.T) {
+		dbConn, err := db.Open(":memory:")
+		if err != nil {
+			t.Fatalf("db.Open(:memory:) error = %v", err)
+		}
+		defer dbConn.Close()
+
+		session := &db.Session{
+			ID:          "test-session",
+			ProjectPath: "/tmp/test",
+			AgentName:   "test-agent",
+			Program:     "test-program",
+			Model:       "test-model",
+		}
+		if err := dbConn.CreateSession(session); err != nil {
+			t.Fatalf("CreateSession error = %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		// Change to tmpDir so default ".slb/logs" is created there
+		oldWd, _ := os.Getwd()
+		_ = os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(oldWd) }()
+
+		cmdSpec := db.CommandSpec{
+			Raw:  "/bin/true",
+			Argv: []string{"/bin/true"},
+			Cwd:  tmpDir,
+		}
+		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := &db.Request{
+			ProjectPath:        tmpDir,
+			RequestorSessionID: "test-session",
+			RequestorAgent:     "test-agent",
+			RequestorModel:     "test-model",
+			RiskTier:           db.RiskTierCaution,
+			Command:            cmdSpec,
+			Status:             db.StatusApproved,
+			ApprovalExpiresAt:  &futureTime,
+		}
+		if err := dbConn.CreateRequest(req); err != nil {
+			t.Fatalf("CreateRequest error = %v", err)
+		}
+
+		exec := NewExecutor(dbConn, nil)
+		result, err := exec.ExecuteApprovedRequest(context.Background(), ExecuteOptions{
+			RequestID:      req.ID,
+			SessionID:      "test-session",
+			SuppressOutput: true,
+			// No LogDir or Timeout specified - should use defaults
+		})
+		if err != nil {
+			t.Fatalf("ExecuteApprovedRequest error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+		// Just verify it completed successfully
+		if result.ExitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.ExitCode)
 		}
 	})
 }

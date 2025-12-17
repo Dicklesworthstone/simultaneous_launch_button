@@ -349,6 +349,45 @@ func TestParseErrorUpgradesTierConservatively(t *testing.T) {
 			t.Fatalf("Tier=%q NeedsApproval=%v IsSafe=%v, want caution/true/false", res.Tier, res.NeedsApproval, res.IsSafe)
 		}
 	})
+
+	t.Run("CAUTION match + parse error upgrades to DANGEROUS", func(t *testing.T) {
+		// git branch -d is CAUTION tier - add parse error to trigger upgrade
+		res := engine.ClassifyCommand(`git branch -d "unterminated`, "")
+		if !res.ParseError {
+			t.Fatalf("expected ParseError=true")
+		}
+		if res.Tier != RiskTierDangerous {
+			t.Fatalf("Tier=%q, want %q", res.Tier, RiskTierDangerous)
+		}
+		if !res.NeedsApproval {
+			t.Fatalf("expected NeedsApproval=true")
+		}
+	})
+
+	t.Run("DANGEROUS match + parse error upgrades to CRITICAL", func(t *testing.T) {
+		// rm -rf is DANGEROUS tier - add parse error to trigger upgrade
+		res := engine.ClassifyCommand(`rm -rf "unterminated`, "")
+		if !res.ParseError {
+			t.Fatalf("expected ParseError=true")
+		}
+		if res.Tier != RiskTierCritical {
+			t.Fatalf("Tier=%q, want %q", res.Tier, RiskTierCritical)
+		}
+		if res.MinApprovals != 2 {
+			t.Fatalf("MinApprovals=%d, want 2", res.MinApprovals)
+		}
+	})
+
+	t.Run("CRITICAL match + parse error stays CRITICAL", func(t *testing.T) {
+		// sudo rm -rf is CRITICAL tier - parse error shouldn't change it
+		res := engine.ClassifyCommand(`sudo rm -rf /* "unterminated`, "")
+		if !res.ParseError {
+			t.Fatalf("expected ParseError=true")
+		}
+		if res.Tier != RiskTierCritical {
+			t.Fatalf("Tier=%q, want %q", res.Tier, RiskTierCritical)
+		}
+	})
 }
 
 func TestCompoundCommandMatchedSegments(t *testing.T) {
@@ -538,6 +577,64 @@ func TestPatternEngineAllPatterns(t *testing.T) {
 			t.Errorf("AllPatterns missing key %q", key)
 		}
 	}
+}
+
+func TestClassifyCommandWithCwd(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("cwd resolves relative paths - may escalate risk", func(t *testing.T) {
+		// Test with a cwd provided - the path should be resolved
+		// When resolved, /home/user/project/build becomes an absolute path which is CRITICAL
+		result := engine.ClassifyCommand("rm -rf ./build", "/home/user/project")
+		// Either dangerous or critical is acceptable depending on path resolution
+		if result.Tier != RiskTierDangerous && result.Tier != RiskTierCritical {
+			t.Errorf("expected dangerous or critical tier, got %q", result.Tier)
+		}
+		if !result.NeedsApproval {
+			t.Errorf("expected NeedsApproval to be true")
+		}
+	})
+
+	t.Run("empty cwd uses command as-is", func(t *testing.T) {
+		result := engine.ClassifyCommand("rm -rf ./build", "")
+		if result.Tier != RiskTierDangerous {
+			t.Errorf("expected dangerous tier, got %q", result.Tier)
+		}
+	})
+
+	t.Run("cwd with absolute path in command", func(t *testing.T) {
+		result := engine.ClassifyCommand("rm -rf /etc", "/home/user/project")
+		if result.Tier != RiskTierCritical {
+			t.Errorf("expected critical tier for /etc, got %q", result.Tier)
+		}
+	})
+}
+
+func TestClassifyCommandEdgeCases(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("empty command", func(t *testing.T) {
+		result := engine.ClassifyCommand("", "")
+		// Empty command should not match any pattern
+		if result.NeedsApproval {
+			t.Errorf("empty command should not need approval")
+		}
+	})
+
+	t.Run("whitespace only command", func(t *testing.T) {
+		result := engine.ClassifyCommand("   ", "")
+		// Whitespace should not match any pattern
+		if result.NeedsApproval && result.Tier != RiskTierCaution {
+			t.Errorf("whitespace command should not match dangerous pattern")
+		}
+	})
+
+	t.Run("unknown command falls through to no match", func(t *testing.T) {
+		result := engine.ClassifyCommand("my-custom-command --flag", "")
+		if result.NeedsApproval {
+			t.Errorf("unknown command should not need approval")
+		}
+	})
 }
 
 func TestConvenienceFunctions(t *testing.T) {

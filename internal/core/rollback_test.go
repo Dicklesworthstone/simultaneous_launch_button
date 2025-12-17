@@ -355,6 +355,258 @@ func execLookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
+func TestLoadRollbackData_Errors(t *testing.T) {
+	t.Run("empty rollback dir", func(t *testing.T) {
+		_, err := LoadRollbackData("")
+		if err == nil {
+			t.Error("expected error for empty rollback dir")
+		}
+	})
+
+	t.Run("whitespace-only rollback dir", func(t *testing.T) {
+		_, err := LoadRollbackData("   ")
+		if err == nil {
+			t.Error("expected error for whitespace rollback dir")
+		}
+	})
+
+	t.Run("nonexistent directory", func(t *testing.T) {
+		_, err := LoadRollbackData("/nonexistent/path/xyz")
+		if err == nil {
+			t.Error("expected error for nonexistent directory")
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte("not json"), 0644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		_, err := LoadRollbackData(tmpDir)
+		if err == nil {
+			t.Error("expected error for invalid JSON")
+		}
+	})
+
+	t.Run("valid JSON loads successfully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		metadata := `{"kind":"filesystem","request_id":"test-123"}`
+		if err := os.WriteFile(filepath.Join(tmpDir, "metadata.json"), []byte(metadata), 0644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		data, err := LoadRollbackData(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRollbackData error: %v", err)
+		}
+		if data.Kind != rollbackKindFilesystem {
+			t.Errorf("expected kind %q, got %q", rollbackKindFilesystem, data.Kind)
+		}
+		if data.RequestID != "test-123" {
+			t.Errorf("expected request_id test-123, got %q", data.RequestID)
+		}
+		// RollbackPath should be set to tmpDir since it was empty
+		if data.RollbackPath != tmpDir {
+			t.Errorf("expected RollbackPath %q, got %q", tmpDir, data.RollbackPath)
+		}
+	})
+}
+
+func TestRestoreRollbackState_Errors(t *testing.T) {
+	t.Run("nil data", func(t *testing.T) {
+		err := RestoreRollbackState(context.Background(), nil, RollbackRestoreOptions{})
+		if err == nil {
+			t.Error("expected error for nil data")
+		}
+	})
+
+	t.Run("empty rollback path", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         rollbackKindFilesystem,
+			RollbackPath: "",
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{})
+		if err == nil {
+			t.Error("expected error for empty rollback path")
+		}
+	})
+
+	t.Run("whitespace rollback path", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         rollbackKindFilesystem,
+			RollbackPath: "   ",
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{})
+		if err == nil {
+			t.Error("expected error for whitespace rollback path")
+		}
+	})
+
+	t.Run("unknown kind", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         "unknown",
+			RollbackPath: "/some/path",
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{})
+		if err == nil {
+			t.Error("expected error for unknown kind")
+		}
+		if !strings.Contains(err.Error(), "unsupported rollback kind") {
+			t.Errorf("expected unsupported rollback kind error, got %v", err)
+		}
+	})
+
+	t.Run("nil context uses background", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         "unknown",
+			RollbackPath: "/some/path",
+		}
+		// Should not panic on nil context
+		err := RestoreRollbackState(nil, data, RollbackRestoreOptions{})
+		if err == nil {
+			t.Error("expected error for unknown kind")
+		}
+	})
+}
+
+func TestRestoreGitRollback_Errors(t *testing.T) {
+	if _, err := execLookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	t.Run("missing git data", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         rollbackKindGit,
+			RollbackPath: "/some/path",
+			Git:          nil,
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{Force: true})
+		if err == nil {
+			t.Error("expected error for missing git data")
+		}
+		if !strings.Contains(err.Error(), "git rollback data missing") {
+			t.Errorf("expected 'git rollback data missing' error, got %v", err)
+		}
+	})
+
+	t.Run("requires force flag", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         rollbackKindGit,
+			RollbackPath: "/some/path",
+			Git: &GitRollbackData{
+				RepoRoot: "/some/repo",
+				Head:     "abc123",
+			},
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{Force: false})
+		if err == nil {
+			t.Error("expected error without force flag")
+		}
+		if !strings.Contains(err.Error(), "force") {
+			t.Errorf("expected force-related error, got %v", err)
+		}
+	})
+
+	t.Run("empty repo root", func(t *testing.T) {
+		data := &RollbackData{
+			Kind:         rollbackKindGit,
+			RollbackPath: "/some/path",
+			Git: &GitRollbackData{
+				RepoRoot: "",
+				Head:     "abc123",
+			},
+		}
+		err := RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{Force: true})
+		if err == nil {
+			t.Error("expected error for empty repo root")
+		}
+		if !strings.Contains(err.Error(), "repo root missing") {
+			t.Errorf("expected 'repo root missing' error, got %v", err)
+		}
+	})
+}
+
+func TestRestoreGitRollback_Full(t *testing.T) {
+	if _, err := execLookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	project := t.TempDir()
+	repo := filepath.Join(project, "repo")
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+
+	if _, err := runCmdString(context.Background(), repo, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = runCmdString(context.Background(), repo, "git", "config", "user.name", "Test")
+	_, _ = runCmdString(context.Background(), repo, "git", "config", "user.email", "test@example.com")
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("original\n"), 0644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if _, err := runCmdString(context.Background(), repo, "git", "add", "."); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	if _, err := runCmdString(context.Background(), repo, "git", "commit", "-m", "init"); err != nil {
+		t.Fatalf("git commit: %v", err)
+	}
+
+	// Get the HEAD commit hash
+	head, err := runCmdString(context.Background(), repo, "git", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	head = strings.TrimSpace(head)
+
+	// Get the current branch
+	branch, err := runCmdString(context.Background(), repo, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Fatalf("git rev-parse branch: %v", err)
+	}
+	branch = strings.TrimSpace(branch)
+
+	// Modify the file
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("modified\n"), 0644); err != nil {
+		t.Fatalf("modify a: %v", err)
+	}
+	if _, err := runCmdString(context.Background(), repo, "git", "add", "."); err != nil {
+		t.Fatalf("git add modified: %v", err)
+	}
+	if _, err := runCmdString(context.Background(), repo, "git", "commit", "-m", "modify"); err != nil {
+		t.Fatalf("git commit modify: %v", err)
+	}
+
+	// Now restore to the original HEAD
+	rollbackDir := t.TempDir()
+	data := &RollbackData{
+		Kind:         rollbackKindGit,
+		RollbackPath: rollbackDir,
+		Git: &GitRollbackData{
+			RepoRoot: repo,
+			Head:     head,
+			Branch:   branch,
+		},
+	}
+
+	err = RestoreRollbackState(context.Background(), data, RollbackRestoreOptions{Force: true})
+	if err != nil {
+		t.Fatalf("RestoreRollbackState: %v", err)
+	}
+
+	// Verify the file was restored
+	content, err := os.ReadFile(filepath.Join(repo, "a.txt"))
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if string(content) != "original\n" {
+		t.Errorf("expected 'original', got %q", string(content))
+	}
+}
+
 func TestBytesTrimSpace(t *testing.T) {
 	tests := []struct {
 		name  string

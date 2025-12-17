@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -73,6 +74,72 @@ func TestCappedBuffer(t *testing.T) {
 	}
 	if b.String() != "hello" {
 		t.Fatalf("String=%q want %q", b.String(), "hello")
+	}
+}
+
+func TestCappedBuffer_UnlimitedMode(t *testing.T) {
+	// max <= 0 means unlimited
+	b := &cappedBuffer{max: 0}
+	data := []byte("hello world this is a long string")
+	if _, err := b.Write(data); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if b.String() != string(data) {
+		t.Fatalf("String=%q want %q", b.String(), string(data))
+	}
+	if b.Truncated() {
+		t.Fatalf("expected not truncated in unlimited mode")
+	}
+
+	// Write more data
+	if _, err := b.Write([]byte(" more data")); err != nil {
+		t.Fatalf("Second Write failed: %v", err)
+	}
+	if !strings.Contains(b.String(), "more data") {
+		t.Fatalf("expected content to include more data")
+	}
+}
+
+func TestCappedBuffer_PartialWrite(t *testing.T) {
+	// Buffer has room for partial write
+	b := &cappedBuffer{max: 7}
+	if _, err := b.Write([]byte("hello")); err != nil {
+		t.Fatalf("First Write failed: %v", err)
+	}
+	// Only 2 bytes remaining
+	n, err := b.Write([]byte("world"))
+	if err != nil {
+		t.Fatalf("Second Write failed: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("expected n=5 (input length), got %d", n)
+	}
+	if b.String() != "hellowo" {
+		t.Fatalf("String=%q want %q", b.String(), "hellowo")
+	}
+	if !b.Truncated() {
+		t.Fatalf("expected truncated after partial write")
+	}
+}
+
+func TestCappedBuffer_AlreadyFull(t *testing.T) {
+	b := &cappedBuffer{max: 5}
+	if _, err := b.Write([]byte("hello")); err != nil {
+		t.Fatalf("First Write failed: %v", err)
+	}
+	// Buffer is exactly full now (remaining = 0)
+	n, err := b.Write([]byte("x"))
+	if err != nil {
+		t.Fatalf("Write to full buffer failed: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected n=1 (input length), got %d", n)
+	}
+	if b.String() != "hello" {
+		t.Fatalf("String=%q want %q", b.String(), "hello")
+	}
+	if !b.Truncated() {
+		t.Fatalf("expected truncated")
 	}
 }
 
@@ -268,5 +335,188 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestCreateLogExcerpt_EdgeCases(t *testing.T) {
+	t.Run("file not found", func(t *testing.T) {
+		_, err := CreateLogExcerpt("/nonexistent/file.log", 1, 10, nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent file")
+		}
+		var ae *AttachmentError
+		if !errors.As(err, &ae) {
+			t.Fatalf("expected AttachmentError, got %T", err)
+		}
+	})
+
+	t.Run("startLine less than 1", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.txt")
+		if err := os.WriteFile(path, []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		att, err := CreateLogExcerpt(path, 0, 2, nil)
+		if err != nil {
+			t.Fatalf("CreateLogExcerpt: %v", err)
+		}
+		// startLine should be adjusted to 1
+		if !strings.Contains(att.Content, "line1") {
+			t.Fatalf("expected content to start with line1, got %q", att.Content)
+		}
+	})
+
+	t.Run("endLine exceeds total lines", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.txt")
+		if err := os.WriteFile(path, []byte("line1\nline2\nline3"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		att, err := CreateLogExcerpt(path, 1, 100, nil)
+		if err != nil {
+			t.Fatalf("CreateLogExcerpt: %v", err)
+		}
+		// Should include all lines
+		if !strings.Contains(att.Content, "line3") {
+			t.Fatalf("expected content to include line3, got %q", att.Content)
+		}
+	})
+
+	t.Run("startLine greater than endLine", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.txt")
+		if err := os.WriteFile(path, []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		att, err := CreateLogExcerpt(path, 5, 2, nil)
+		if err != nil {
+			t.Fatalf("CreateLogExcerpt: %v", err)
+		}
+		// startLine should be adjusted to equal endLine
+		if att.Metadata["lines"] != "2-2" {
+			t.Fatalf("expected lines metadata to be 2-2, got %v", att.Metadata["lines"])
+		}
+	})
+
+	t.Run("endLine less than 1", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.txt")
+		if err := os.WriteFile(path, []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		att, err := CreateLogExcerpt(path, 1, 0, nil)
+		if err != nil {
+			t.Fatalf("CreateLogExcerpt: %v", err)
+		}
+		// Should include all lines (endLine adjusted to len(lines))
+		totalLines, ok := att.Metadata["total_lines"].(int)
+		if !ok || totalLines < 3 {
+			t.Fatalf("expected total_lines >= 3, got %v", att.Metadata["total_lines"])
+		}
+	})
+}
+
+func TestLoadAttachmentFromFile_Errors(t *testing.T) {
+	t.Run("file not found", func(t *testing.T) {
+		_, err := LoadAttachmentFromFile("/nonexistent/file.txt", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("unreadable file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("permission test not reliable on windows")
+		}
+		dir := t.TempDir()
+		path := filepath.Join(dir, "noperm.txt")
+		if err := os.WriteFile(path, []byte("test"), 0o000); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		defer os.Chmod(path, 0o644) // cleanup
+
+		_, err := LoadAttachmentFromFile(path, nil)
+		if err == nil {
+			t.Fatal("expected error for unreadable file")
+		}
+	})
+}
+
+func TestLoadScreenshot_Errors(t *testing.T) {
+	t.Run("file not found", func(t *testing.T) {
+		_, err := LoadScreenshot("/nonexistent/image.png", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("corrupt image file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "corrupt.png")
+		// Write invalid PNG data
+		if err := os.WriteFile(path, []byte("not a png file"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// LoadScreenshot errors on corrupt images (it tries to decode them)
+		_, err := LoadScreenshot(path, nil)
+		if err == nil {
+			t.Fatal("expected error for corrupt image")
+		}
+		var ae *AttachmentError
+		if !errors.As(err, &ae) {
+			t.Fatalf("expected AttachmentError, got %T", err)
+		}
+	})
+}
+
+func TestRunContextCommand_NilConfig(t *testing.T) {
+	// RunContextCommand uses defaults for nil config
+	att, err := RunContextCommand(context.Background(), "echo hello", nil)
+	if err != nil {
+		t.Fatalf("RunContextCommand with nil config error: %v", err)
+	}
+	if att.Type != db.AttachmentTypeContext {
+		t.Fatalf("Type=%q want %q", att.Type, db.AttachmentTypeContext)
+	}
+}
+
+func TestRunContextCommand_EmptyCommand(t *testing.T) {
+	cfg := DefaultAttachmentConfig()
+	cfg.MaxCommandRuntime = 0
+
+	// Empty command runs shell -c "" which returns quickly with empty output
+	att, err := RunContextCommand(context.Background(), "", &cfg)
+	if err != nil {
+		t.Fatalf("RunContextCommand with empty command error: %v", err)
+	}
+	if att.Type != db.AttachmentTypeContext {
+		t.Fatalf("Type=%q want %q", att.Type, db.AttachmentTypeContext)
+	}
+}
+
+func TestRunContextCommand_ContextCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip context test on windows")
+	}
+
+	cfg := DefaultAttachmentConfig()
+	cfg.MaxCommandRuntime = 0 // No timeout from config
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Cancelled context returns immediately with output (possibly empty)
+	att, err := RunContextCommand(ctx, "sleep 10", &cfg)
+	if err != nil {
+		t.Fatalf("RunContextCommand with cancelled context error: %v", err)
+	}
+	// Should have some metadata about the result
+	if att.Type != db.AttachmentTypeContext {
+		t.Fatalf("Type=%q want %q", att.Type, db.AttachmentTypeContext)
+	}
 }
 

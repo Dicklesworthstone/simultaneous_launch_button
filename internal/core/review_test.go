@@ -941,6 +941,370 @@ func TestCanReview(t *testing.T) {
 	})
 }
 
+func TestSubmitReview_ValidationErrors(t *testing.T) {
+	dbConn, _, req := setupReviewTest(t)
+	defer dbConn.Close()
+
+	rs := NewReviewService(dbConn, DefaultReviewConfig())
+
+	t.Run("empty session_id", func(t *testing.T) {
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  "",
+			SessionKey: "key",
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err == nil || err.Error() != "session_id is required" {
+			t.Errorf("expected session_id required error, got %v", err)
+		}
+	})
+
+	t.Run("empty request_id", func(t *testing.T) {
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  "session",
+			SessionKey: "key",
+			RequestID:  "",
+			Decision:   db.DecisionApprove,
+		})
+		if err == nil || err.Error() != "request_id is required" {
+			t.Errorf("expected request_id required error, got %v", err)
+		}
+	})
+
+	t.Run("invalid decision", func(t *testing.T) {
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  "session",
+			SessionKey: "key",
+			RequestID:  req.ID,
+			Decision:   db.Decision("invalid"),
+		})
+		if err != ErrInvalidDecision {
+			t.Errorf("expected ErrInvalidDecision, got %v", err)
+		}
+	})
+}
+
+func TestSubmitReview_SessionErrors(t *testing.T) {
+	t.Run("session not found", func(t *testing.T) {
+		dbConn, _, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  "nonexistent",
+			SessionKey: "key",
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err == nil {
+			t.Error("expected error for nonexistent session")
+		}
+	})
+
+	t.Run("session inactive", func(t *testing.T) {
+		dbConn, _, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		// Create an inactive session
+		sess := &db.Session{
+			AgentName:   "GreenLake",
+			Program:     "claude-code",
+			Model:       "opus-4.5",
+			ProjectPath: "/test/project",
+		}
+		if err := dbConn.CreateSession(sess); err != nil {
+			t.Fatalf("CreateSession() error = %v", err)
+		}
+		// End the session
+		if err := dbConn.EndSession(sess.ID); err != nil {
+			t.Fatalf("EndSession() error = %v", err)
+		}
+
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  sess.ID,
+			SessionKey: sess.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err != ErrSessionInactive {
+			t.Errorf("expected ErrSessionInactive, got %v", err)
+		}
+	})
+}
+
+func TestSubmitReview_RequestErrors(t *testing.T) {
+	t.Run("request not pending", func(t *testing.T) {
+		dbConn, _, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		// Create a reviewer
+		reviewer := &db.Session{
+			AgentName:   "GreenLake",
+			Program:     "claude-code",
+			Model:       "opus-4.5",
+			ProjectPath: "/test/project",
+		}
+		if err := dbConn.CreateSession(reviewer); err != nil {
+			t.Fatalf("CreateSession() error = %v", err)
+		}
+
+		// Mark request as approved
+		if err := dbConn.UpdateRequestStatus(req.ID, db.StatusApproved); err != nil {
+			t.Fatalf("UpdateRequestStatus() error = %v", err)
+		}
+
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  reviewer.ID,
+			SessionKey: reviewer.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err == nil {
+			t.Error("expected error for non-pending request")
+		}
+	})
+}
+
+func TestSubmitReview_SelfReview(t *testing.T) {
+	t.Run("self review rejected for untrusted agent", func(t *testing.T) {
+		dbConn, sess, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  sess.ID,
+			SessionKey: sess.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err != ErrSelfReview {
+			t.Errorf("expected ErrSelfReview, got %v", err)
+		}
+	})
+
+	t.Run("trusted self-approve requires delay", func(t *testing.T) {
+		dbConn, sess, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		config := ReviewConfig{
+			TrustedSelfApprove:      []string{sess.AgentName},
+			TrustedSelfApproveDelay: 5 * time.Minute,
+		}
+		rs := NewReviewService(dbConn, config)
+
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  sess.ID,
+			SessionKey: sess.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err == nil {
+			t.Error("expected error for trusted self-approve without delay")
+		}
+	})
+
+	t.Run("trusted self-approve after delay succeeds", func(t *testing.T) {
+		dbConn, sess, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		// Backdate request to simulate delay
+		old := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+		if _, err := dbConn.Exec(`UPDATE requests SET created_at = ? WHERE id = ?`, old, req.ID); err != nil {
+			t.Fatalf("failed to backdate request: %v", err)
+		}
+
+		// Update RequireDifferentModel to false so this can succeed
+		if _, err := dbConn.Exec(`UPDATE requests SET require_different_model = 0 WHERE id = ?`, req.ID); err != nil {
+			t.Fatalf("failed to update request: %v", err)
+		}
+
+		config := ReviewConfig{
+			TrustedSelfApprove:      []string{sess.AgentName},
+			TrustedSelfApproveDelay: 5 * time.Minute,
+		}
+		rs := NewReviewService(dbConn, config)
+
+		result, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  sess.ID,
+			SessionKey: sess.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err != nil {
+			t.Fatalf("SubmitReview() error = %v", err)
+		}
+		if result.Review == nil {
+			t.Error("expected review to be created")
+		}
+	})
+}
+
+func TestSubmitReview_AlreadyReviewed(t *testing.T) {
+	dbConn, _, req := setupReviewTest(t)
+	defer dbConn.Close()
+
+	// Set MinApprovals=2 so request stays pending after first review
+	req.MinApprovals = 2
+	if _, err := dbConn.Exec(`UPDATE requests SET min_approvals = ? WHERE id = ?`, req.MinApprovals, req.ID); err != nil {
+		t.Fatalf("failed to update min_approvals: %v", err)
+	}
+
+	// Create a reviewer
+	reviewer := &db.Session{
+		AgentName:   "GreenLake",
+		Program:     "claude-code",
+		Model:       "opus-4.5",
+		ProjectPath: "/test/project",
+	}
+	if err := dbConn.CreateSession(reviewer); err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	rs := NewReviewService(dbConn, DefaultReviewConfig())
+
+	// Submit first review
+	_, err := rs.SubmitReview(ReviewOptions{
+		SessionID:  reviewer.ID,
+		SessionKey: reviewer.SessionKey,
+		RequestID:  req.ID,
+		Decision:   db.DecisionApprove,
+	})
+	if err != nil {
+		t.Fatalf("First SubmitReview() error = %v", err)
+	}
+
+	// Verify request is still pending (needs more approvals)
+	updatedReq, err := dbConn.GetRequest(req.ID)
+	if err != nil {
+		t.Fatalf("GetRequest() error = %v", err)
+	}
+	if updatedReq.Status != db.StatusPending {
+		t.Fatalf("expected request to still be pending, got %s", updatedReq.Status)
+	}
+
+	// Try to submit another review from same reviewer
+	_, err = rs.SubmitReview(ReviewOptions{
+		SessionID:  reviewer.ID,
+		SessionKey: reviewer.SessionKey,
+		RequestID:  req.ID,
+		Decision:   db.DecisionReject,
+	})
+	if err != ErrAlreadyReviewed {
+		t.Errorf("expected ErrAlreadyReviewed, got %v", err)
+	}
+}
+
+func TestSubmitReview_Rejection(t *testing.T) {
+	dbConn, _, req := setupReviewTest(t)
+	defer dbConn.Close()
+
+	// Create a reviewer with different model
+	reviewer := &db.Session{
+		AgentName:   "GreenLake",
+		Program:     "claude-code",
+		Model:       "opus-4.5",
+		ProjectPath: "/test/project",
+	}
+	if err := dbConn.CreateSession(reviewer); err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	rs := NewReviewService(dbConn, DefaultReviewConfig())
+	result, err := rs.SubmitReview(ReviewOptions{
+		SessionID:  reviewer.ID,
+		SessionKey: reviewer.SessionKey,
+		RequestID:  req.ID,
+		Decision:   db.DecisionReject,
+		Comments:   "Dangerous command",
+	})
+	if err != nil {
+		t.Fatalf("SubmitReview() error = %v", err)
+	}
+
+	if result.Review == nil {
+		t.Fatal("expected review to be created")
+	}
+	if result.Review.Decision != db.DecisionReject {
+		t.Errorf("expected decision=reject, got %s", result.Review.Decision)
+	}
+	if !result.RequestStatusChanged {
+		t.Error("expected request status to change")
+	}
+	if result.NewRequestStatus != db.StatusRejected {
+		t.Errorf("expected status=rejected, got %s", result.NewRequestStatus)
+	}
+}
+
+func TestSubmitReview_NotifierCalled(t *testing.T) {
+	t.Run("notifier called on approval", func(t *testing.T) {
+		dbConn, _, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		reviewer := &db.Session{
+			AgentName:   "GreenLake",
+			Program:     "claude-code",
+			Model:       "opus-4.5",
+			ProjectPath: "/test/project",
+		}
+		if err := dbConn.CreateSession(reviewer); err != nil {
+			t.Fatalf("CreateSession() error = %v", err)
+		}
+
+		notifier := &mockRequestNotifier{}
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		rs.SetNotifier(notifier)
+
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  reviewer.ID,
+			SessionKey: reviewer.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionApprove,
+		})
+		if err != nil {
+			t.Fatalf("SubmitReview() error = %v", err)
+		}
+
+		if !notifier.approvedCalled {
+			t.Error("expected NotifyRequestApproved to be called")
+		}
+	})
+
+	t.Run("notifier called on rejection", func(t *testing.T) {
+		dbConn, _, req := setupReviewTest(t)
+		defer dbConn.Close()
+
+		reviewer := &db.Session{
+			AgentName:   "GreenLake",
+			Program:     "claude-code",
+			Model:       "opus-4.5",
+			ProjectPath: "/test/project",
+		}
+		if err := dbConn.CreateSession(reviewer); err != nil {
+			t.Fatalf("CreateSession() error = %v", err)
+		}
+
+		notifier := &mockRequestNotifier{}
+		rs := NewReviewService(dbConn, DefaultReviewConfig())
+		rs.SetNotifier(notifier)
+
+		_, err := rs.SubmitReview(ReviewOptions{
+			SessionID:  reviewer.ID,
+			SessionKey: reviewer.SessionKey,
+			RequestID:  req.ID,
+			Decision:   db.DecisionReject,
+		})
+		if err != nil {
+			t.Fatalf("SubmitReview() error = %v", err)
+		}
+
+		if !notifier.rejectedCalled {
+			t.Error("expected NotifyRequestRejected to be called")
+		}
+	})
+}
+
 func TestGetReviewStatus(t *testing.T) {
 	t.Run("request not found", func(t *testing.T) {
 		dbConn, err := db.Open(":memory:")
@@ -1079,6 +1443,46 @@ func TestGetReviewStatus(t *testing.T) {
 		}
 		if status.MinApprovals != 3 {
 			t.Errorf("Expected MinApprovals=3, got %d", status.MinApprovals)
+		}
+	})
+}
+
+func TestCanReview_AdditionalCases(t *testing.T) {
+	dbConn, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open(:memory:) error = %v", err)
+	}
+	defer dbConn.Close()
+
+	rs := NewReviewService(dbConn, DefaultReviewConfig())
+
+	t.Run("empty session_id returns false", func(t *testing.T) {
+		canReview, msg := rs.CanReview("", "req-id")
+		if canReview {
+			t.Errorf("expected canReview=false for empty session_id, got true")
+		}
+		if msg == "" {
+			t.Error("expected message for empty session_id")
+		}
+	})
+
+	t.Run("empty request_id returns false", func(t *testing.T) {
+		canReview, msg := rs.CanReview("session-id", "")
+		if canReview {
+			t.Errorf("expected canReview=false for empty request_id, got true")
+		}
+		if msg == "" {
+			t.Error("expected message for empty request_id")
+		}
+	})
+
+	t.Run("session not found returns false", func(t *testing.T) {
+		canReview, msg := rs.CanReview("nonexistent", "req-id")
+		if canReview {
+			t.Errorf("expected canReview=false for nonexistent session, got true")
+		}
+		if msg == "" {
+			t.Error("expected message for nonexistent session")
 		}
 	})
 }
