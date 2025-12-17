@@ -1,8 +1,14 @@
 package core
 
 import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dicklesworthstone/slb/internal/db"
 )
@@ -98,4 +104,189 @@ func TestComputeCommandHashUniqueness(t *testing.T) {
 		}
 		hashes[hash] = i
 	}
+}
+
+func TestRunCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell execution tests use Unix commands")
+	}
+
+	t.Run("shell mode executes raw command", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "echo 'hello world'",
+			Shell: true,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if !strings.Contains(result.Output, "hello world") {
+			t.Errorf("expected output to contain 'hello world', got %q", result.Output)
+		}
+		if result.ExitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", result.ExitCode)
+		}
+	})
+
+	t.Run("argv mode executes parsed command", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "echo hello",
+			Argv:  []string{"echo", "hello"},
+			Shell: false,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if !strings.Contains(result.Output, "hello") {
+			t.Errorf("expected output to contain 'hello', got %q", result.Output)
+		}
+	})
+
+	t.Run("raw mode parses command when no argv", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "echo hello",
+			Shell: false,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if !strings.Contains(result.Output, "hello") {
+			t.Errorf("expected output to contain 'hello', got %q", result.Output)
+		}
+	})
+
+	t.Run("empty command returns error", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "",
+			Shell: false,
+		}
+		ctx := context.Background()
+		_, err := RunCommand(ctx, spec, "", nil)
+		if err == nil {
+			t.Error("expected error for empty command")
+		}
+	})
+
+	t.Run("writes to log file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		logPath := filepath.Join(tmpDir, "test.log")
+
+		spec := &db.CommandSpec{
+			Raw:   "echo 'logged output'",
+			Shell: true,
+		}
+		ctx := context.Background()
+		_, err := RunCommand(ctx, spec, logPath, nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+
+		content, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("ReadFile error: %v", err)
+		}
+		if !strings.Contains(string(content), "logged output") {
+			t.Errorf("expected log file to contain output, got %q", string(content))
+		}
+		if !strings.Contains(string(content), "SLB Command Execution") {
+			t.Errorf("expected log file to contain header")
+		}
+	})
+
+	t.Run("writes to stream writer", func(t *testing.T) {
+		var buf bytes.Buffer
+		spec := &db.CommandSpec{
+			Raw:   "echo 'streamed'",
+			Shell: true,
+		}
+		ctx := context.Background()
+		_, err := RunCommand(ctx, spec, "", &buf)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if !strings.Contains(buf.String(), "streamed") {
+			t.Errorf("expected stream buffer to contain 'streamed', got %q", buf.String())
+		}
+	})
+
+	t.Run("sets working directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		spec := &db.CommandSpec{
+			Raw:   "pwd",
+			Shell: true,
+			Cwd:   tmpDir,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if !strings.Contains(result.Output, tmpDir) {
+			t.Errorf("expected output to contain %q, got %q", tmpDir, result.Output)
+		}
+	})
+
+	t.Run("captures non-zero exit code", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "exit 42",
+			Shell: true,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		// Non-zero exit code should not return error
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if result.ExitCode != 42 {
+			t.Errorf("expected exit code 42, got %d", result.ExitCode)
+		}
+	})
+
+	t.Run("handles context timeout", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "sleep 10",
+			Shell: true,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		result, err := RunCommand(ctx, spec, "", nil)
+		// Should either return timeout error or non-zero exit code
+		if err == nil && result.ExitCode == 0 {
+			t.Error("expected timeout to cause error or non-zero exit")
+		}
+	})
+
+	t.Run("invalid log path returns error", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "echo test",
+			Shell: true,
+		}
+		ctx := context.Background()
+		// Path that can't be opened
+		_, err := RunCommand(ctx, spec, "/nonexistent/directory/file.log", nil)
+		if err == nil {
+			t.Error("expected error for invalid log path")
+		}
+	})
+
+	t.Run("records duration", func(t *testing.T) {
+		spec := &db.CommandSpec{
+			Raw:   "sleep 0.1",
+			Shell: true,
+		}
+		ctx := context.Background()
+		result, err := RunCommand(ctx, spec, "", nil)
+		if err != nil {
+			t.Fatalf("RunCommand error: %v", err)
+		}
+		if result.Duration < 50*time.Millisecond {
+			t.Errorf("expected duration >= 50ms, got %v", result.Duration)
+		}
+	})
 }

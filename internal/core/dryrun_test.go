@@ -462,3 +462,220 @@ func TestRmTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestDryRunInternalFunctions(t *testing.T) {
+	t.Run("dryRunGit non-reset command returns false", func(t *testing.T) {
+		_, ok := dryRunGit([]string{"git", "status"})
+		if ok {
+			t.Error("expected ok=false for git status")
+		}
+	})
+
+	t.Run("dryRunGit reset without target returns false", func(t *testing.T) {
+		_, ok := dryRunGit([]string{"git", "reset", "--hard"})
+		if ok {
+			t.Error("expected ok=false for reset without target")
+		}
+	})
+
+	t.Run("dryRunGit reset with target returns diff command", func(t *testing.T) {
+		tokens, ok := dryRunGit([]string{"git", "reset", "--hard", "HEAD~2"})
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if len(tokens) != 3 {
+			t.Fatalf("expected 3 tokens, got %d", len(tokens))
+		}
+		if tokens[0] != "git" || tokens[1] != "diff" {
+			t.Errorf("expected git diff command, got %v", tokens)
+		}
+	})
+
+	t.Run("dryRunHelm non-uninstall command returns false", func(t *testing.T) {
+		_, ok := dryRunHelm([]string{"helm", "install", "myrelease"})
+		if ok {
+			t.Error("expected ok=false for helm install")
+		}
+	})
+
+	t.Run("dryRunHelm uninstall without release returns false", func(t *testing.T) {
+		_, ok := dryRunHelm([]string{"helm", "uninstall"})
+		if ok {
+			t.Error("expected ok=false for uninstall without release")
+		}
+	})
+
+	t.Run("dryRunHelm uninstall with release returns manifest command", func(t *testing.T) {
+		tokens, ok := dryRunHelm([]string{"helm", "uninstall", "myapp"})
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if len(tokens) != 4 {
+			t.Fatalf("expected 4 tokens, got %d", len(tokens))
+		}
+		if tokens[0] != "helm" || tokens[1] != "get" || tokens[2] != "manifest" || tokens[3] != "myapp" {
+			t.Errorf("expected helm get manifest myapp, got %v", tokens)
+		}
+	})
+
+	t.Run("dryRunRM only flags returns false", func(t *testing.T) {
+		_, ok := dryRunRM([]string{"rm", "-rf"})
+		if ok {
+			t.Error("expected ok=false when no paths")
+		}
+	})
+
+	t.Run("dryRunRM with paths returns ls command", func(t *testing.T) {
+		tokens, ok := dryRunRM([]string{"rm", "-rf", "/tmp/test"})
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if tokens[0] != "ls" || tokens[1] != "-la" {
+			t.Errorf("expected ls -la command, got %v", tokens)
+		}
+	})
+
+	t.Run("dryRunRM too few tokens returns false", func(t *testing.T) {
+		_, ok := dryRunRM([]string{"rm"})
+		if ok {
+			t.Error("expected ok=false for too few tokens")
+		}
+	})
+
+	t.Run("dryRunKubectl delete with existing dry-run flag", func(t *testing.T) {
+		tokens, ok := dryRunKubectl([]string{"kubectl", "delete", "--dry-run=client", "pod", "nginx"})
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		// Should still return the command with dry-run
+		found := false
+		for _, t := range tokens {
+			if strings.HasPrefix(t, "--dry-run") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected --dry-run flag in output, got %v", tokens)
+		}
+	})
+
+	t.Run("dryRunTerraform destroy returns plan -destroy", func(t *testing.T) {
+		tokens, ok := dryRunTerraform([]string{"terraform", "destroy", "-auto-approve"})
+		if !ok {
+			t.Fatal("expected ok=true for terraform destroy")
+		}
+		if len(tokens) < 3 || tokens[0] != "terraform" || tokens[1] != "plan" || tokens[2] != "-destroy" {
+			t.Errorf("expected terraform plan -destroy, got %v", tokens)
+		}
+	})
+
+	t.Run("dryRunTerraform apply returns false", func(t *testing.T) {
+		_, ok := dryRunTerraform([]string{"terraform", "apply"})
+		if ok {
+			t.Error("expected ok=false for terraform apply (only destroy is supported)")
+		}
+	})
+
+	t.Run("dryRunTerraform init returns false", func(t *testing.T) {
+		_, ok := dryRunTerraform([]string{"terraform", "init"})
+		if ok {
+			t.Error("expected ok=false for terraform init")
+		}
+	})
+}
+
+func TestParseShellTokens_ErrorFallback(t *testing.T) {
+	t.Run("unclosed quote falls back to fields split", func(t *testing.T) {
+		// Unclosed quote causes shellwords to fail, fallback to strings.Fields
+		tokens := parseShellTokens(`echo "hello world`)
+		// strings.Fields splits on whitespace, so quote becomes part of token
+		if len(tokens) < 2 {
+			t.Errorf("expected at least 2 tokens from fallback, got %d", len(tokens))
+		}
+	})
+}
+
+func TestGetDryRunTokens(t *testing.T) {
+	t.Run("empty command returns false", func(t *testing.T) {
+		_, ok := getDryRunTokens("")
+		if ok {
+			t.Error("expected false for empty command")
+		}
+	})
+
+	t.Run("whitespace only returns false", func(t *testing.T) {
+		_, ok := getDryRunTokens("   ")
+		if ok {
+			t.Error("expected false for whitespace-only command")
+		}
+	})
+
+	t.Run("unrecognized command returns false", func(t *testing.T) {
+		_, ok := getDryRunTokens("ls -la")
+		if ok {
+			t.Error("expected false for unrecognized command")
+		}
+	})
+
+	t.Run("kubectl recognized", func(t *testing.T) {
+		tokens, ok := getDryRunTokens("kubectl delete pod nginx")
+		if !ok {
+			t.Error("expected true for kubectl delete")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+
+	t.Run("terraform destroy recognized", func(t *testing.T) {
+		tokens, ok := getDryRunTokens("terraform destroy")
+		if !ok {
+			t.Error("expected true for terraform destroy")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+
+	t.Run("rm with paths recognized", func(t *testing.T) {
+		tokens, ok := getDryRunTokens("rm -rf /tmp/test")
+		if !ok {
+			t.Error("expected true for rm with paths")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+
+	t.Run("git reset recognized", func(t *testing.T) {
+		tokens, ok := getDryRunTokens("git reset --hard HEAD~1")
+		if !ok {
+			t.Error("expected true for git reset")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+
+	t.Run("helm uninstall recognized", func(t *testing.T) {
+		tokens, ok := getDryRunTokens("helm uninstall myapp")
+		if !ok {
+			t.Error("expected true for helm uninstall")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+
+	t.Run("uses normalized primary if available", func(t *testing.T) {
+		// Test with shell wrapper that normalizes away
+		tokens, ok := getDryRunTokens("bash -c 'kubectl delete pod nginx'")
+		if !ok {
+			t.Error("expected true for wrapped kubectl delete")
+		}
+		if len(tokens) == 0 {
+			t.Error("expected non-empty tokens")
+		}
+	})
+}

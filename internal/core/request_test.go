@@ -181,6 +181,28 @@ func TestApplyRedaction_CustomPattern(t *testing.T) {
 	}
 }
 
+func TestApplyRedaction_InvalidPattern(t *testing.T) {
+	cmd := "normal command"
+	// Invalid regex pattern should be skipped without error
+	result := ApplyRedaction(cmd, []string{`[invalid`})
+
+	// Command should remain unchanged since the invalid pattern is skipped
+	if result != cmd {
+		t.Errorf("expected command unchanged with invalid pattern, got: %s", result)
+	}
+}
+
+func TestApplyRedaction_MixedPatterns(t *testing.T) {
+	cmd := "my-secret-abc123 and normal text"
+	// Mix of valid and invalid patterns
+	result := ApplyRedaction(cmd, []string{`[invalid`, `my-secret-[a-z0-9]+`})
+
+	// Invalid pattern should be skipped, valid pattern should apply
+	if !containsSubstring(result, "[REDACTED]") {
+		t.Errorf("expected valid pattern to be applied, got: %s", result)
+	}
+}
+
 func TestDetectSensitiveContent(t *testing.T) {
 	tests := []struct {
 		cmd      string

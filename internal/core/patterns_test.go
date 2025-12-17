@@ -678,3 +678,112 @@ func TestConvenienceFunctions(t *testing.T) {
 		}
 	})
 }
+
+func TestClassifyCompoundCommands(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("xargs with rm escalates to dangerous inner command", func(t *testing.T) {
+		// find | xargs rm should classify based on rm
+		result := engine.ClassifyCommand("find . | xargs rm -rf", "")
+		if !result.NeedsApproval {
+			t.Error("expected xargs rm -rf to need approval")
+		}
+		// Should be at least dangerous due to rm -rf
+		if result.Tier != RiskTierDangerous && result.Tier != RiskTierCritical {
+			t.Errorf("expected dangerous or critical tier, got %q", result.Tier)
+		}
+	})
+
+	t.Run("xargs with kubectl delete", func(t *testing.T) {
+		result := engine.ClassifyCommand("kubectl get pods | xargs kubectl delete pod", "")
+		if !result.NeedsApproval {
+			t.Error("expected xargs kubectl delete to need approval")
+		}
+	})
+
+	t.Run("pipe with safe commands is safe", func(t *testing.T) {
+		result := engine.ClassifyCommand("ls -la | grep test | head -5", "")
+		// Safe commands don't need approval
+		if result.NeedsApproval && result.Tier != RiskTierCaution {
+			t.Errorf("ls | grep | head should not be dangerous, got tier %q", result.Tier)
+		}
+	})
+
+	t.Run("compound with dangerous or critical command escalates", func(t *testing.T) {
+		result := engine.ClassifyCommand("ls -la && rm -rf /", "")
+		// rm -rf / may be dangerous or critical depending on pattern matching
+		if result.Tier != RiskTierDangerous && result.Tier != RiskTierCritical {
+			t.Errorf("expected dangerous or critical tier, got %q", result.Tier)
+		}
+		if result.MinApprovals < 1 {
+			t.Errorf("should require at least 1 approval, got %d", result.MinApprovals)
+		}
+	})
+
+	t.Run("multiple segments with varying risk levels", func(t *testing.T) {
+		// Mix of safe, caution, and dangerous commands
+		result := engine.ClassifyCommand("git status && npm install && rm -rf ./build", "")
+		// Should escalate to dangerous (rm -rf with relative path)
+		if result.Tier != RiskTierDangerous && result.Tier != RiskTierCritical {
+			t.Errorf("expected dangerous or critical tier, got %q", result.Tier)
+		}
+	})
+
+	t.Run("tracks matched segments", func(t *testing.T) {
+		result := engine.ClassifyCommand("git status && rm -rf /tmp/test", "")
+		// Should have matched segments from each part
+		if len(result.MatchedSegments) == 0 {
+			t.Error("expected matched segments to be recorded")
+		}
+	})
+}
+
+func TestClassifyCommand_SQLDetection(t *testing.T) {
+	engine := NewPatternEngine()
+
+	t.Run("SQL delete without WHERE is critical", func(t *testing.T) {
+		// DELETE FROM without WHERE should be critical
+		result := engine.ClassifyCommand("psql -c 'DELETE FROM users'", "")
+		if result.Tier != RiskTierCritical {
+			t.Errorf("expected critical tier for DELETE without WHERE, got %q", result.Tier)
+		}
+		if result.MatchedPattern == "" {
+			t.Error("expected a matched pattern")
+		}
+	})
+
+	t.Run("SQL delete with WHERE is dangerous", func(t *testing.T) {
+		result := engine.ClassifyCommand("mysql -e 'DELETE FROM users WHERE id = 1'", "")
+		if result.Tier != RiskTierDangerous {
+			t.Errorf("expected dangerous tier for DELETE with WHERE, got %q", result.Tier)
+		}
+		if result.MatchedPattern == "" {
+			t.Error("expected a matched pattern")
+		}
+	})
+
+	t.Run("SQL truncate is critical", func(t *testing.T) {
+		result := engine.ClassifyCommand("psql -c 'TRUNCATE TABLE users'", "")
+		if result.Tier != RiskTierCritical {
+			t.Errorf("expected critical tier for TRUNCATE, got %q", result.Tier)
+		}
+	})
+
+	t.Run("SQL drop is dangerous or critical", func(t *testing.T) {
+		result := engine.ClassifyCommand("mysql -e 'DROP TABLE users'", "")
+		if result.Tier != RiskTierDangerous && result.Tier != RiskTierCritical {
+			t.Errorf("expected dangerous or critical tier for DROP TABLE, got %q", result.Tier)
+		}
+		if !result.NeedsApproval {
+			t.Error("DROP TABLE should need approval")
+		}
+	})
+
+	t.Run("SQL select is not dangerous", func(t *testing.T) {
+		result := engine.ClassifyCommand("psql -c 'SELECT * FROM users'", "")
+		// SELECT should not be critical or dangerous
+		if result.Tier == RiskTierCritical || result.Tier == RiskTierDangerous {
+			t.Errorf("SELECT should not be dangerous/critical, got %q", result.Tier)
+		}
+	})
+}
