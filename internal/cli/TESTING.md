@@ -460,6 +460,74 @@ func TestMyFunc_RetryLogic(t *testing.T) {
 - `outputPatterns` - Pattern formatting
 - All `init` functions
 
+## Exit Code Testing Pattern (P3.3 Decision)
+
+### The Challenge
+
+Functions that call `os.Exit()` present a testing challenge because `os.Exit()` terminates the process, including the test runner:
+
+```go
+func Execute() error {
+    if err := rootCmd.Execute(); err != nil {
+        os.Exit(1)  // This kills the test runner!
+    }
+}
+```
+
+### Evaluated Options
+
+**Option A: Build Tag Approach**
+```go
+//go:build !test
+var osExit = os.Exit
+
+//go:build test
+var osExit = func(code int) { capturedExitCode = code }
+```
+- Pros: Clean separation
+- Cons: Build complexity, easy to forget tags
+
+**Option B: Dependency Injection**
+```go
+func ExecuteWithExit(exit func(int)) { ... }
+func Execute() { ExecuteWithExit(os.Exit) }
+```
+- Pros: Explicit, testable
+- Cons: API change, extra indirection
+
+**Option C: Accept 0% Coverage (CHOSEN)**
+- Pros: No code changes, simpler maintenance
+- Cons: Reduced coverage metric
+
+### Decision: Option C
+
+**Rationale:**
+1. **Trivial code**: `Execute()` is 3 lines; the complexity is in `rootCmd.Execute()` which is already tested
+2. **Integration tested**: E2E tests verify exit codes by running the actual binary
+3. **Cost vs benefit**: Testing infrastructure cost is high for minimal bug-catching benefit
+4. **Coverage target is 90%, not 100%**: Accepting a few system-level functions at 0% is appropriate
+
+**Mitigation Strategy: Pure Function Extraction**
+
+For complex functions with `os.Exit()`, extract the business logic into testable pure functions:
+
+```go
+// System-level (0% coverage, acceptable)
+func runCommand() {
+    if !shouldProceed(req) {
+        os.Exit(1)
+    }
+    // ... execution
+}
+
+// Pure function (100% coverage)
+func shouldProceed(req *Request) bool {
+    // All business logic here, fully testable
+}
+```
+
+This pattern is used throughout the CLI package (see `shouldAutoApproveCaution`, `evaluateRequestForPolling`, etc.).
+
 ## Coverage Acceptance Matrix
 
 Some functions are intentionally excluded from unit test coverage due to their nature:
