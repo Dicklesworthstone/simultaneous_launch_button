@@ -265,9 +265,10 @@ func (db *DB) UpdateRequestStatus(id string, status RequestStatus) error {
 		resolvedAt = sql.NullString{String: now, Valid: true}
 	}
 
+	// Optimistic locking: ensure status hasn't changed since we read it
 	result, err := db.Exec(`
-		UPDATE requests SET status = ?, resolved_at = ? WHERE id = ?
-	`, string(status), resolvedAt, id)
+		UPDATE requests SET status = ?, resolved_at = ? WHERE id = ? AND status = ?
+	`, string(status), resolvedAt, id, string(r.Status))
 	if err != nil {
 		return fmt.Errorf("updating request status: %w", err)
 	}
@@ -277,7 +278,16 @@ func (db *DB) UpdateRequestStatus(id string, status RequestStatus) error {
 		return fmt.Errorf("getting rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		return ErrRequestNotFound
+		// Check if request disappeared or status changed
+		latest, err := db.GetRequest(id)
+		if err != nil {
+			if errors.Is(err, ErrRequestNotFound) {
+				return ErrRequestNotFound
+			}
+			return fmt.Errorf("checking request status after failed update: %w", err)
+		}
+		// Status changed concurrently
+		return fmt.Errorf("%w: concurrent update detected (wanted %s, got %s)", ErrInvalidTransition, r.Status, latest.Status)
 	}
 
 	return nil
