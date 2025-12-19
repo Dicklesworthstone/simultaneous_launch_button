@@ -208,63 +208,65 @@ func isEnvAssignment(tok string) bool {
 	return envAssignPattern.MatchString(tok)
 }
 
-// ResolvePathsInCommand expands relative paths to absolute paths.
+// ResolvePathsInCommand expands relative paths to absolute paths using tokenization.
+// It handles home directory expansion (~), absolute paths, and relative paths
+// containing separators (./, ../, foo/bar).
 func ResolvePathsInCommand(cmd, cwd string) string {
-	// Expand ~ to home directory even when cwd is empty.
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		tildePattern := regexp.MustCompile(`(^|\s)~(/[^\s]*)?`)
-		cmd = tildePattern.ReplaceAllStringFunc(cmd, func(match string) string {
-			prefix := ""
-			if len(match) > 0 && (match[0] == ' ' || match[0] == '\t') {
-				prefix = match[:1]
-				match = match[1:]
-			}
-
-			suffix := strings.TrimPrefix(match, "~")
-			suffix = strings.TrimPrefix(suffix, "/")
-			suffix = strings.TrimPrefix(suffix, "\\")
-
-			resolved := home
-			if suffix != "" {
-				resolved = filepath.Join(home, suffix)
-			}
-
-			return prefix + resolved
-		})
+	// Parse into tokens to safely handle arguments
+	parser := shellwords.NewParser()
+	parser.ParseEnv = false
+	parser.ParseBacktick = false
+	tokens, err := parser.Parse(cmd)
+	if err != nil {
+		// Fallback to simple fields if parsing fails
+		tokens = strings.Fields(cmd)
 	}
 
-	if cwd == "" {
-		return cmd
+	home, _ := os.UserHomeDir()
+
+	for i, tok := range tokens {
+		// Handle flag=value case (e.g., --output=/tmp/foo)
+		if strings.HasPrefix(tok, "-") {
+			if idx := strings.Index(tok, "="); idx != -1 {
+				key := tok[:idx+1]
+				val := tok[idx+1:]
+				tokens[i] = key + cleanPathToken(val, cwd, home)
+			}
+			continue
+		}
+
+		tokens[i] = cleanPathToken(tok, cwd, home)
 	}
 
-	// Simple path resolution - replace ./ and ../ patterns
-	// More sophisticated parsing could be done with shell tokenization
+	return strings.Join(tokens, " ")
+}
 
-	// Replace ./ at word boundaries
-	dotSlashPattern := regexp.MustCompile(`(^|\s)\.(/[^\s]*)`)
-	cmd = dotSlashPattern.ReplaceAllStringFunc(cmd, func(match string) string {
-		prefix := ""
-		if len(match) > 0 && (match[0] == ' ' || match[0] == '\t') {
-			prefix = string(match[0])
-			match = match[1:]
+// cleanPathToken cleans a single token if it looks like a path.
+func cleanPathToken(tok, cwd, home string) string {
+	// Expand ~
+	if home != "" {
+		if tok == "~" {
+			tok = home
+		} else if strings.HasPrefix(tok, "~/") {
+			tok = filepath.Join(home, tok[2:])
 		}
-		resolved := filepath.Join(cwd, match)
-		return prefix + resolved
-	})
+	}
 
-	// Replace ../ patterns
-	dotDotPattern := regexp.MustCompile(`(^|\s)\.\.(/[^\s]*)`)
-	cmd = dotDotPattern.ReplaceAllStringFunc(cmd, func(match string) string {
-		prefix := ""
-		if len(match) > 0 && (match[0] == ' ' || match[0] == '\t') {
-			prefix = string(match[0])
-			match = match[1:]
+	// If absolute, clean and return
+	if filepath.IsAbs(tok) {
+		return filepath.Clean(tok)
+	}
+
+	// If relative path (contains separator or is . / ..), resolve against CWD
+	if strings.Contains(tok, "/") || tok == "." || tok == ".." {
+		if cwd != "" {
+			return filepath.Clean(filepath.Join(cwd, tok))
 		}
-		resolved := filepath.Clean(filepath.Join(cwd, match))
-		return prefix + resolved
-	})
+		return filepath.Clean(tok)
+	}
 
-	return cmd
+	// Otherwise treat as plain string (command name, flag, simple argument)
+	return tok
 }
 
 // ExtractCommandName extracts just the command name (first word).
