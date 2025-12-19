@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Dicklesworthstone/slb/internal/core"
 	"github.com/Dicklesworthstone/slb/internal/db"
 	"github.com/Dicklesworthstone/slb/internal/testutil"
 	"github.com/spf13/cobra"
@@ -144,7 +143,7 @@ func TestExecuteCommand_ExecutesApprovedRequest(t *testing.T) {
 		testutil.WithCommand("/bin/true", h.ProjectDir, true),
 	)
 	// Recompute hash using core.ComputeCommandHash (executor uses this, not db's version)
-	req.Command.Hash = core.ComputeCommandHash(req.Command)
+	req.Command.Hash = db.ComputeCommandHash(req.Command)
 	h.DB.Exec(`UPDATE requests SET command_hash = ? WHERE id = ?`, req.Command.Hash, req.ID)
 	// Approve the request
 	h.DB.UpdateRequestStatus(req.ID, db.StatusApproved)
@@ -226,7 +225,7 @@ func TestExecuteCommand_CustomTimeout(t *testing.T) {
 		testutil.WithCommand("/bin/true", h.ProjectDir, true),
 	)
 	// Recompute hash using core.ComputeCommandHash
-	req.Command.Hash = core.ComputeCommandHash(req.Command)
+	req.Command.Hash = db.ComputeCommandHash(req.Command)
 	h.DB.Exec(`UPDATE requests SET command_hash = ? WHERE id = ?`, req.Command.Hash, req.ID)
 	h.DB.UpdateRequestStatus(req.ID, db.StatusApproved)
 

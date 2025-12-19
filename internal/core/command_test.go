@@ -57,7 +57,7 @@ func TestComputeCommandHash(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hash := ComputeCommandHash(tc.spec)
+			hash := db.ComputeCommandHash(tc.spec)
 
 			// Hash should be non-empty
 			if hash == "" {
@@ -78,7 +78,7 @@ func TestComputeCommandHash(t *testing.T) {
 			}
 
 			// Same input should produce same hash
-			hash2 := ComputeCommandHash(tc.spec)
+			hash2 := db.ComputeCommandHash(tc.spec)
 			if hash != hash2 {
 				t.Errorf("ComputeCommandHash not deterministic: %q != %q", hash, hash2)
 			}
@@ -98,7 +98,7 @@ func TestComputeCommandHashUniqueness(t *testing.T) {
 
 	hashes := make(map[string]int)
 	for i, spec := range specs {
-		hash := ComputeCommandHash(spec)
+		hash := db.ComputeCommandHash(spec)
 		if prevIdx, exists := hashes[hash]; exists {
 			t.Errorf("Specs %d and %d produced same hash %q", prevIdx, i, hash)
 		}

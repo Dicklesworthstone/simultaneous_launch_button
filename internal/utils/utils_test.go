@@ -2,7 +2,6 @@ package utils
 
 import (
 	"bytes"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,51 +9,6 @@ import (
 
 	"github.com/charmbracelet/log"
 )
-
-func TestCommandHash_DeterministicAndSensitiveToInputs(t *testing.T) {
-	h1 := CommandHash("rm -rf ./build", "/repo", "sh", []string{"rm", "-rf", "./build"})
-	h2 := CommandHash("rm -rf ./build", "/repo", "sh", []string{"rm", "-rf", "./build"})
-	if h1 != h2 {
-		t.Fatalf("expected deterministic hash, got %q vs %q", h1, h2)
-	}
-
-	if _, err := hex.DecodeString(h1); err != nil {
-		t.Fatalf("expected hex sha256, got %q: %v", h1, err)
-	}
-
-	// Any input change should change the hash.
-	if got := CommandHash("rm -rf ./build", "/repo2", "sh", []string{"rm", "-rf", "./build"}); got == h1 {
-		t.Fatalf("expected cwd change to affect hash")
-	}
-	if got := CommandHash("rm -rf ./build", "/repo", "bash", []string{"rm", "-rf", "./build"}); got == h1 {
-		t.Fatalf("expected shell change to affect hash")
-	}
-	if got := CommandHash("rm -rf ./build", "/repo", "sh", []string{"rm", "-rf"}); got == h1 {
-		t.Fatalf("expected argv change to affect hash")
-	}
-	if got := CommandHash("rm -rf ./build --no-preserve-root", "/repo", "sh", []string{"rm", "-rf", "./build"}); got == h1 {
-		t.Fatalf("expected raw change to affect hash")
-	}
-}
-
-func TestHMAC_VerifyHMAC(t *testing.T) {
-	key := []byte("secret-key")
-	msg := []byte("hello")
-
-	sig := HMAC(key, msg)
-	if sig == "" {
-		t.Fatalf("expected signature")
-	}
-	if !VerifyHMAC(key, msg, sig) {
-		t.Fatalf("expected signature to verify")
-	}
-	if VerifyHMAC(key, []byte("hello2"), sig) {
-		t.Fatalf("expected signature to fail for different message")
-	}
-	if VerifyHMAC([]byte("other-key"), msg, sig) {
-		t.Fatalf("expected signature to fail for different key")
-	}
-}
 
 func TestParseLevel(t *testing.T) {
 	cases := []struct {

@@ -4,9 +4,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -139,29 +136,4 @@ func RunCommand(ctx context.Context, spec *db.CommandSpec, logPath string, strea
 	}, nil
 }
 
-// ComputeCommandHash computes the SHA256 hash of a command spec.
-// Hash = sha256(raw + "\n" + cwd + "\n" + argv_json + "\n" + shell)
-func ComputeCommandHash(spec db.CommandSpec) string {
-	var buf bytes.Buffer
 
-	buf.WriteString(spec.Raw)
-	buf.WriteString("\n")
-	buf.WriteString(spec.Cwd)
-	buf.WriteString("\n")
-
-	// Serialize argv as JSON for consistent hashing
-	if len(spec.Argv) > 0 {
-		argvJSON, _ := json.Marshal(spec.Argv)
-		buf.Write(argvJSON)
-	}
-	buf.WriteString("\n")
-
-	if spec.Shell {
-		buf.WriteString("true")
-	} else {
-		buf.WriteString("false")
-	}
-
-	hash := sha256.Sum256(buf.Bytes())
-	return hex.EncodeToString(hash[:])
-}

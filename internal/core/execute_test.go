@@ -437,7 +437,7 @@ func TestExecutorCanExecute(t *testing.T) {
 			Cwd: "/tmp",
 		}
 		// Pre-compute hash using core's function so CanExecute validation passes
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		req := &db.Request{
 			ProjectPath:        "/tmp/test",
@@ -962,7 +962,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Raw: "rm -rf /tmp/test",
 			Cwd: "/tmp",
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1014,7 +1014,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1087,7 +1087,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/false"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1157,7 +1157,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1222,7 +1222,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"sleep", "10"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1302,7 +1302,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1369,7 +1369,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1441,7 +1441,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1500,7 +1500,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Argv: []string{"/bin/true"},
 			Cwd:  tmpDir,
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		futureTime := time.Now().Add(1 * time.Hour)
 		req := &db.Request{
@@ -1562,7 +1562,7 @@ func TestExecuteApprovedRequest(t *testing.T) {
 			Raw: "rm -rf /very/important/path", // This is dangerous, not caution
 			Cwd: "/",
 		}
-		cmdSpec.Hash = ComputeCommandHash(cmdSpec)
+		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
 
 		req := &db.Request{
 			ProjectPath:        "/tmp/test",

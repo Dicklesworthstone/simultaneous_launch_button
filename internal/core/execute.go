@@ -146,7 +146,7 @@ func (e *Executor) ExecuteApprovedRequest(ctx context.Context, opts ExecuteOptio
 	}
 
 	// Gate 3: Command hash must match (prevents mutation)
-	expectedHash := ComputeCommandHash(request.Command)
+	expectedHash := db.ComputeCommandHash(request.Command)
 	if expectedHash != request.Command.Hash {
 		return nil, fmt.Errorf("%w: stored=%s computed=%s", ErrCommandHashMismatch, request.Command.Hash, expectedHash)
 	}
@@ -304,7 +304,7 @@ func (e *Executor) CanExecute(requestID string) (bool, string) {
 		return false, "approval has expired"
 	}
 
-	expectedHash := ComputeCommandHash(request.Command)
+	expectedHash := db.ComputeCommandHash(request.Command)
 	if expectedHash != request.Command.Hash {
 		return false, "command hash mismatch (command may have been modified)"
 	}
