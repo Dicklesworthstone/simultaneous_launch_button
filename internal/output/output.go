@@ -28,22 +28,57 @@ type Writer struct {
 	errOut io.Writer
 }
 
+// Option configures the Writer.
+type Option func(*Writer)
+
+// WithOutput sets the standard output writer.
+func WithOutput(w io.Writer) Option {
+	return func(wr *Writer) {
+		wr.out = w
+	}
+}
+
+// WithErrorOutput sets the error output writer.
+func WithErrorOutput(w io.Writer) Option {
+	return func(wr *Writer) {
+		wr.errOut = w
+	}
+}
+
 // New creates a new output writer.
-func New(format Format) *Writer {
-	return &Writer{
+func New(format Format, opts ...Option) *Writer {
+	w := &Writer{
 		format: format,
 		out:    os.Stdout,
 		errOut: os.Stderr,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 // Write outputs data in the configured format.
 func (w *Writer) Write(data any) error {
 	switch w.format {
 	case FormatJSON:
-		return OutputJSON(data)
+		enc := json.NewEncoder(w.out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(data)
 	case FormatYAML:
-		return OutputYAML(data)
+		normalized, err := normalizeForYAML(data)
+		if err != nil {
+			return err
+		}
+		b, err := yaml.Marshal(normalized)
+		if err != nil {
+			return err
+		}
+		if len(b) == 0 || b[len(b)-1] != '\n' {
+			b = append(b, '\n')
+		}
+		_, err = w.out.Write(b)
+		return err
 	case FormatText:
 		// Human-friendly output goes to stderr to keep stdout clean for piping.
 		_, err := fmt.Fprintf(w.errOut, "%v\n", data)
@@ -57,7 +92,8 @@ func (w *Writer) Write(data any) error {
 func (w *Writer) WriteNDJSON(data any) error {
 	switch w.format {
 	case FormatJSON:
-		return OutputNDJSON(data)
+		enc := json.NewEncoder(w.out)
+		return enc.Encode(data)
 	case FormatText:
 		_, err := fmt.Fprintf(w.errOut, "%v\n", data)
 		return err

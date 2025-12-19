@@ -103,7 +103,7 @@ Examples:
 			Screenshots: flagRunAttachScreen,
 		})
 		if err != nil {
-			return writeError(out, "attachment_error", command, err)
+			return writeError(cmd, out, "attachment_error", command, err)
 		}
 
 		// Step 1: Classify and create request using config-derived limits and notifiers
@@ -124,12 +124,19 @@ Examples:
 			ProjectPath: project,
 		})
 		if err != nil {
-			return writeError(out, "request_failed", command, err)
+			return writeError(cmd, out, "request_failed", command, err)
 		}
 
 		// Step 2: If SAFE, execute immediately
 		if result.Skipped {
-			return runSafeCommand(out, command, cwd, project)
+			exitCode, err := runSafeCommand(cmd, out, command, cwd, project)
+			if err != nil {
+				return err
+			}
+			if exitCode != 0 {
+				os.Exit(exitCode)
+			}
+			return nil
 		}
 
 		request := result.Request
@@ -150,7 +157,7 @@ Examples:
 		for time.Now().Before(deadline) {
 			request, _, err = dbConn.GetRequestWithReviews(request.ID)
 			if err != nil {
-				return writeError(out, "poll_failed", command, err)
+				return writeError(cmd, out, "poll_failed", command, err)
 			}
 
 			// Evaluate status
@@ -161,7 +168,7 @@ Examples:
 			}
 
 			if !decision.ShouldContinuePolling {
-				return writeError(out, string(request.Status), command,
+				return writeError(cmd, out, string(request.Status), command,
 					fmt.Errorf("request %s: %s", request.ID, decision.Reason))
 			}
 
@@ -172,19 +179,26 @@ Examples:
 		if request.Status == db.StatusPending {
 			// Mark as timeout
 			_ = dbConn.UpdateRequestStatus(request.ID, db.StatusTimeout)
-			return writeError(out, "timeout", command,
+			return writeError(cmd, out, "timeout", command,
 				fmt.Errorf("request %s timed out waiting for approval", request.ID))
 		}
 
 		// Step 5: Execute the approved command
-		return runApprovedRequest(out, dbConn, cfg, project, request.ID)
+		exitCode, err := runApprovedRequest(out, dbConn, cfg, project, request.ID)
+		if err != nil {
+			return err
+		}
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return nil
 	},
 }
 
-func runSafeCommand(out *output.Writer, command, cwd, project string) error {
+func runSafeCommand(cmd *cobra.Command, out *output.Writer, command, cwd, project string) (int, error) {
 	logPath, err := createRunLogFile(project, "safe")
 	if err != nil {
-		return writeError(out, "log_create_failed", command, err)
+		return 0, writeError(cmd, out, "log_create_failed", command, err)
 	}
 
 	spec := &db.CommandSpec{
@@ -192,7 +206,7 @@ func runSafeCommand(out *output.Writer, command, cwd, project string) error {
 		Cwd:   cwd,
 		Shell: true,
 	}
-	spec.Hash = core.ComputeCommandHash(*spec)
+	spec.Hash = db.ComputeCommandHash(*spec)
 
 	var streamWriter *os.File
 	if GetOutput() != "json" {
@@ -224,26 +238,23 @@ func runSafeCommand(out *output.Writer, command, cwd, project string) error {
 	if GetOutput() == "json" {
 		_ = out.Write(resp)
 		if execErr != nil {
-			os.Exit(1)
+			return 1, nil // JSON output success, but command failed
 		}
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return nil
+		return exitCode, nil
 	}
 
 	if execErr != nil {
 		fmt.Fprintf(os.Stderr, "[slb] Execution failed: %s\n", execErr.Error())
-		os.Exit(1)
+		return 1, nil
 	}
 	if exitCode != 0 {
 		fmt.Fprintf(os.Stderr, "\n[slb] Command exited with code %d\n", exitCode)
-		os.Exit(exitCode)
+		return exitCode, nil
 	}
-	return nil
+	return 0, nil
 }
 
-func runApprovedRequest(out *output.Writer, dbConn *db.DB, cfg config.Config, project, requestID string) error {
+func runApprovedRequest(out *output.Writer, dbConn *db.DB, cfg config.Config, project, requestID string) (int, error) {
 	executor := core.NewExecutor(dbConn, nil).WithNotifier(buildAgentMailNotifier(project))
 
 	execResult, execErr := executor.ExecuteApprovedRequest(context.Background(), core.ExecuteOptions{
@@ -278,23 +289,20 @@ func runApprovedRequest(out *output.Writer, dbConn *db.DB, cfg config.Config, pr
 	if GetOutput() == "json" {
 		_ = out.Write(resp)
 		if execErr != nil {
-			os.Exit(1)
+			return 1, nil
 		}
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return nil
+		return exitCode, nil
 	}
 
 	if execErr != nil {
 		fmt.Fprintf(os.Stderr, "[slb] Execution failed: %s\n", execErr.Error())
-		os.Exit(1)
+		return 1, nil
 	}
 	if exitCode != 0 {
 		fmt.Fprintf(os.Stderr, "\n[slb] Command exited with code %d\n", exitCode)
-		os.Exit(exitCode)
+		return exitCode, nil
 	}
-	return nil
+	return 0, nil
 }
 
 func createRunLogFile(project, prefix string) (string, error) {
@@ -398,7 +406,7 @@ func toRequestCreatorConfig(cfg config.Config) *core.RequestCreatorConfig {
 }
 
 // writeError outputs an error response.
-func writeError(out *output.Writer, status, command string, err error) error {
+func writeError(cmd *cobra.Command, out *output.Writer, status, command string, err error) error {
 	resp := map[string]any{
 		"status":  status,
 		"command": command,
@@ -411,6 +419,9 @@ func writeError(out *output.Writer, status, command string, err error) error {
 		fmt.Fprintf(os.Stderr, "[slb] Error: %s\n", err.Error())
 	}
 
-	os.Exit(1)
-	return nil // unreachable
+	// Silence Cobra's default error printing since we handled it
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+
+	return err
 }

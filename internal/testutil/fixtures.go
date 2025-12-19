@@ -136,6 +136,11 @@ func WithRequireDifferentModel(required bool) RequestOption {
 	return func(r *db.Request) { r.RequireDifferentModel = required }
 }
 
+// WithStatus sets request status.
+func WithStatus(status db.RequestStatus) RequestOption {
+	return func(r *db.Request) { r.Status = status }
+}
+
 // WithMinApprovals sets the minimum approvals required.
 func WithMinApprovals(n int) RequestOption {
 	return func(r *db.Request) { r.MinApprovals = n }
