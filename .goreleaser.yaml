@@ -93,7 +93,8 @@ release:
   name_template: "v{{.Version}}"
 
 brews:
-  - repository:
+  - skip: true # TODO: Create Dicklesworthstone/homebrew-tap repo to enable Homebrew
+    repository:
       owner: Dicklesworthstone
       name: homebrew-tap
     directory: Formula
