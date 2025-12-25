@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TimelineEvent represents a single event in the request timeline.
@@ -20,10 +20,10 @@ type TimelineEvent struct {
 
 // Timeline renders a request lifecycle timeline.
 type Timeline struct {
-	Events    []TimelineEvent
-	Compact   bool
-	Expanded  bool
-	Current   string // Current state to highlight
+	Events   []TimelineEvent
+	Compact  bool
+	Expanded bool
+	Current  string // Current state to highlight
 }
 
 // NewTimeline creates a new timeline component.

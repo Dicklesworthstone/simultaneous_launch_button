@@ -19,17 +19,17 @@ import (
 
 // DetailKeyMap defines keybindings for the detail view.
 type DetailKeyMap struct {
-	Approve   key.Binding
-	Reject    key.Binding
-	Copy      key.Binding
-	Execute   key.Binding
-	Escalate  key.Binding
-	Back      key.Binding
-	ScrollUp  key.Binding
-	ScrollDn  key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Quit      key.Binding
+	Approve  key.Binding
+	Reject   key.Binding
+	Copy     key.Binding
+	Execute  key.Binding
+	Escalate key.Binding
+	Back     key.Binding
+	ScrollUp key.Binding
+	ScrollDn key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Quit     key.Binding
 }
 
 // DefaultDetailKeyMap returns the default keybindings.
@@ -96,15 +96,15 @@ const (
 
 // DetailModel is the Bubble Tea model for request detail view.
 type DetailModel struct {
-	Request      *db.Request
-	Reviews      []db.Review
-	Session      *db.Session // Current session for approval eligibility
-	Width        int
-	Height       int
-	KeyMap       DetailKeyMap
-	Mode         DetailMode
-	viewport     viewport.Model
-	ready        bool
+	Request  *db.Request
+	Reviews  []db.Review
+	Session  *db.Session // Current session for approval eligibility
+	Width    int
+	Height   int
+	KeyMap   DetailKeyMap
+	Mode     DetailMode
+	viewport viewport.Model
+	ready    bool
 
 	// Sub-models for forms
 	approveForm *ApproveModel

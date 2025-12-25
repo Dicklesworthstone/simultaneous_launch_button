@@ -299,8 +299,8 @@ func TestTableRenderWithSelection(t *testing.T) {
 
 func TestTableCalculateWidths(t *testing.T) {
 	columns := []Column{
-		{Header: "ID", Width: 5},              // Fixed
-		{Header: "Name", MinWidth: 10},        // Auto with min
+		{Header: "ID", Width: 5},                    // Fixed
+		{Header: "Name", MinWidth: 10},              // Auto with min
 		{Header: "Desc", MinWidth: 5, MaxWidth: 20}, // Auto with min/max
 	}
 	rows := [][]string{

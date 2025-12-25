@@ -2,8 +2,8 @@
 package styles
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Gradient represents a color gradient for text.

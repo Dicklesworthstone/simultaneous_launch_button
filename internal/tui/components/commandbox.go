@@ -4,18 +4,18 @@ package components
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
 	"github.com/Dicklesworthstone/slb/internal/utils"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // CommandBox renders a command in a styled box.
 type CommandBox struct {
-	Command     string
-	Redacted    string // Optional redacted version
-	ShowHint    bool   // Show copy hint
-	MaxWidth    int
-	Scrollable  bool
+	Command    string
+	Redacted   string // Optional redacted version
+	ShowHint   bool   // Show copy hint
+	MaxWidth   int
+	Scrollable bool
 }
 
 // NewCommandBox creates a new command box component.

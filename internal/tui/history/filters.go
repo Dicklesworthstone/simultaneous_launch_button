@@ -10,7 +10,7 @@ import (
 
 // TierOptions are the available tier filter options.
 var TierOptions = []string{
-	"",                         // All
+	"", // All
 	string(db.RiskTierCritical),
 	string(db.RiskTierDangerous),
 	string(db.RiskTierCaution),
@@ -18,7 +18,7 @@ var TierOptions = []string{
 
 // StatusOptions are the available status filter options.
 var StatusOptions = []string{
-	"",                              // All
+	"", // All
 	string(db.StatusPending),
 	string(db.StatusApproved),
 	string(db.StatusRejected),

@@ -135,5 +135,3 @@ func RunCommand(ctx context.Context, spec *db.CommandSpec, logPath string, strea
 		Duration: duration,
 	}, nil
 }
-
-

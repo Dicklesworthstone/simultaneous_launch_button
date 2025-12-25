@@ -159,12 +159,12 @@ func TestClampSelection(t *testing.T) {
 		sel, off, total, visible int
 		expectedSel, expectedOff int
 	}{
-		{0, 0, 0, 5, 0, 0},           // Empty
-		{0, 0, 10, 5, 0, 0},          // Normal start
-		{5, 0, 10, 5, 5, 1},          // Move past visible
-		{-1, 0, 10, 5, 0, 0},         // Negative sel
-		{15, 0, 10, 5, 9, 5},         // Sel past total
-		{3, 5, 10, 5, 3, 3},          // Sel before offset
+		{0, 0, 0, 5, 0, 0},   // Empty
+		{0, 0, 10, 5, 0, 0},  // Normal start
+		{5, 0, 10, 5, 5, 1},  // Move past visible
+		{-1, 0, 10, 5, 0, 0}, // Negative sel
+		{15, 0, 10, 5, 9, 5}, // Sel past total
+		{3, 5, 10, 5, 3, 3},  // Sel before offset
 	}
 
 	for _, tc := range tests {
@@ -179,7 +179,7 @@ func TestClampSelection(t *testing.T) {
 
 func TestWindow(t *testing.T) {
 	tests := []struct {
-		offset, total, visible int
+		offset, total, visible     int
 		expectedStart, expectedEnd int
 	}{
 		{0, 10, 5, 0, 5},
@@ -830,7 +830,7 @@ func TestClampSelectionEdgeCases(t *testing.T) {
 		sel, off, total, visible int
 		expectedSel, expectedOff int
 	}{
-		{"visible zero", 5, 0, 10, 0, 5, 5},      // visible <= 0 becomes 1, off = sel - visible + 1 = 5
+		{"visible zero", 5, 0, 10, 0, 5, 5}, // visible <= 0 becomes 1, off = sel - visible + 1 = 5
 		{"sel past visible window", 8, 0, 10, 3, 8, 6},
 		{"offset past total", 0, 15, 10, 5, 0, 0},
 	}
@@ -1027,4 +1027,3 @@ func TestLoadDataWithDisplayRedacted(t *testing.T) {
 		t.Errorf("expected command to be 'redacted cmd', got %q", pending[0].Command)
 	}
 }
-

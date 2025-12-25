@@ -55,22 +55,22 @@ func (c RateLimitConfig) normalized() RateLimitConfig {
 
 // RateLimitResult describes whether a session can submit a new request right now.
 type RateLimitResult struct {
-	Allowed            bool           `json:"allowed"`
+	Allowed            bool            `json:"allowed"`
 	Action             RateLimitAction `json:"action"`
-	RemainingPending   int            `json:"remaining_pending"`
-	RemainingPerMinute int            `json:"remaining_per_minute"`
-	ResetAt            time.Time      `json:"reset_at"`
-	Message            string         `json:"message,omitempty"`
+	RemainingPending   int             `json:"remaining_pending"`
+	RemainingPerMinute int             `json:"remaining_per_minute"`
+	ResetAt            time.Time       `json:"reset_at"`
+	Message            string          `json:"message,omitempty"`
 }
 
 // RateLimitError is returned when Action == "reject" and limits are exceeded.
 type RateLimitError struct {
-	SessionID          string
-	Pending            int
-	MaxPending         int
-	Recent             int
-	MaxPerMinute       int
-	ResetAt            time.Time
+	SessionID    string
+	Pending      int
+	MaxPending   int
+	Recent       int
+	MaxPerMinute int
+	ResetAt      time.Time
 }
 
 func (e *RateLimitError) Error() string {

@@ -9,14 +9,14 @@ import (
 // IconSet defines a set of icons for the TUI.
 type IconSet struct {
 	// Status icons
-	Approved   string
-	Rejected   string
-	Pending    string
-	Executing  string
-	Failed     string
-	Timeout    string
-	Cancelled  string
-	Escalated  string
+	Approved  string
+	Rejected  string
+	Pending   string
+	Executing string
+	Failed    string
+	Timeout   string
+	Cancelled string
+	Escalated string
 
 	// Tier icons
 	Critical  string
@@ -107,62 +107,62 @@ func nerd() *IconSet {
 		// Status icons (using Nerd Font symbols)
 		Approved:  "✓",
 		Rejected:  "✗",
-		Pending:   "",   // nf-fa-hourglass_half
-		Executing: "",   // nf-fa-cog_spin (use spinner)
-		Failed:    "",   // nf-fa-times_circle
-		Timeout:   "",   // nf-fa-clock
-		Cancelled: "",   // nf-fa-ban
-		Escalated: "",   // nf-fa-exclamation_triangle
+		Pending:   "", // nf-fa-hourglass_half
+		Executing: "", // nf-fa-cog_spin (use spinner)
+		Failed:    "", // nf-fa-times_circle
+		Timeout:   "", // nf-fa-clock
+		Cancelled: "", // nf-fa-ban
+		Escalated: "", // nf-fa-exclamation_triangle
 
 		// Tier icons
-		Critical:  "",   // nf-fa-skull_crossbones or circle
-		Dangerous: "",   // nf-fa-radiation
-		Caution:   "",   // nf-fa-exclamation_triangle
-		Safe:      "",   // nf-fa-check_circle
+		Critical:  "", // nf-fa-skull_crossbones or circle
+		Dangerous: "", // nf-fa-radiation
+		Caution:   "", // nf-fa-exclamation_triangle
+		Safe:      "", // nf-fa-check_circle
 
 		// UI icons
 		Agent:      "󰀄", // nf-md-robot
 		Daemon:     "󰒍", // nf-md-cogs
-		Session:    "", // nf-fa-plug
-		Command:    "", // nf-fa-terminal
-		Time:       "", // nf-fa-clock
-		Warning:    "", // nf-fa-exclamation_triangle
-		Info:       "", // nf-fa-info_circle
-		Error:      "", // nf-fa-times_circle
-		Success:    "", // nf-fa-check_circle
-		Loading:    "", // nf-fa-spinner
-		Refresh:    "", // nf-fa-refresh
-		Search:     "", // nf-fa-search
-		Filter:     "", // nf-fa-filter
-		Sort:       "", // nf-fa-sort
-		Expand:     "", // nf-fa-chevron_down
-		Collapse:   "", // nf-fa-chevron_up
-		Copy:       "", // nf-fa-copy
-		Edit:       "", // nf-fa-edit
-		Delete:     "", // nf-fa-trash
-		Add:        "", // nf-fa-plus
-		Check:      "", // nf-fa-check
-		Cross:      "", // nf-fa-times
-		Arrow:      "", // nf-fa-arrow_right
-		ArrowRight: "", // nf-fa-arrow_right
-		ArrowDown:  "", // nf-fa-arrow_down
-		ArrowUp:    "", // nf-fa-arrow_up
-		Dot:        "", // nf-fa-circle (small)
-		Circle:     "", // nf-fa-circle
-		Square:     "", // nf-fa-square
-		Diamond:    "", // nf-fa-diamond
-		Star:       "", // nf-fa-star
-		Lock:       "", // nf-fa-lock
-		Unlock:     "", // nf-fa-unlock
-		Key:        "", // nf-fa-key
-		User:       "", // nf-fa-user
-		Users:      "", // nf-fa-users
-		Terminal:   "", // nf-fa-terminal
-		File:       "", // nf-fa-file
-		Folder:     "", // nf-fa-folder
-		Git:        "", // nf-fa-git
-		Database:   "", // nf-fa-database
-		Cloud:      "", // nf-fa-cloud
+		Session:    "",  // nf-fa-plug
+		Command:    "",  // nf-fa-terminal
+		Time:       "",  // nf-fa-clock
+		Warning:    "",  // nf-fa-exclamation_triangle
+		Info:       "",  // nf-fa-info_circle
+		Error:      "",  // nf-fa-times_circle
+		Success:    "",  // nf-fa-check_circle
+		Loading:    "",  // nf-fa-spinner
+		Refresh:    "",  // nf-fa-refresh
+		Search:     "",  // nf-fa-search
+		Filter:     "",  // nf-fa-filter
+		Sort:       "",  // nf-fa-sort
+		Expand:     "",  // nf-fa-chevron_down
+		Collapse:   "",  // nf-fa-chevron_up
+		Copy:       "",  // nf-fa-copy
+		Edit:       "",  // nf-fa-edit
+		Delete:     "",  // nf-fa-trash
+		Add:        "",  // nf-fa-plus
+		Check:      "",  // nf-fa-check
+		Cross:      "",  // nf-fa-times
+		Arrow:      "",  // nf-fa-arrow_right
+		ArrowRight: "",  // nf-fa-arrow_right
+		ArrowDown:  "",  // nf-fa-arrow_down
+		ArrowUp:    "",  // nf-fa-arrow_up
+		Dot:        "",  // nf-fa-circle (small)
+		Circle:     "",  // nf-fa-circle
+		Square:     "",  // nf-fa-square
+		Diamond:    "",  // nf-fa-diamond
+		Star:       "",  // nf-fa-star
+		Lock:       "",  // nf-fa-lock
+		Unlock:     "",  // nf-fa-unlock
+		Key:        "",  // nf-fa-key
+		User:       "",  // nf-fa-user
+		Users:      "",  // nf-fa-users
+		Terminal:   "",  // nf-fa-terminal
+		File:       "",  // nf-fa-file
+		Folder:     "",  // nf-fa-folder
+		Git:        "",  // nf-fa-git
+		Database:   "",  // nf-fa-database
+		Cloud:      "",  // nf-fa-cloud
 	}
 }
 

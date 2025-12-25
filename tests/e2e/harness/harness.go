@@ -331,8 +331,8 @@ func testConfig() *config.Config {
 	cfg := config.DefaultConfig()
 
 	// Short timeouts for tests
-	cfg.General.RequestTimeoutSecs = 60       // 60s instead of 30min
-	cfg.General.ApprovalTTLMins = 5           // 5min instead of 30min
+	cfg.General.RequestTimeoutSecs = 60 // 60s instead of 30min
+	cfg.General.ApprovalTTLMins = 5     // 5min instead of 30min
 	cfg.General.ApprovalTTLCriticalMins = 2
 
 	// Minimal approvals for faster tests

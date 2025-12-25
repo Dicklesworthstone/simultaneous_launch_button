@@ -4,31 +4,31 @@ package components
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Column defines a table column.
 type Column struct {
-	Header    string
-	Width     int    // Fixed width (0 = auto)
-	MinWidth  int
-	MaxWidth  int
-	Align     lipgloss.Position
-	Sortable  bool
-	SortKey   string // Key for sorting
+	Header   string
+	Width    int // Fixed width (0 = auto)
+	MinWidth int
+	MaxWidth int
+	Align    lipgloss.Position
+	Sortable bool
+	SortKey  string // Key for sorting
 }
 
 // Table renders data in a styled table.
 type Table struct {
-	Columns      []Column
-	Rows         [][]string
-	SelectedRow  int
-	ShowHeader   bool
-	Striped      bool
-	Compact      bool
-	BorderStyle  lipgloss.Border
-	MaxWidth     int
+	Columns     []Column
+	Rows        [][]string
+	SelectedRow int
+	ShowHeader  bool
+	Striped     bool
+	Compact     bool
+	BorderStyle lipgloss.Border
+	MaxWidth    int
 }
 
 // NewTable creates a new table component.

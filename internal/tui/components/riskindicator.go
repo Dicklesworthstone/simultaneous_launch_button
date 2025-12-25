@@ -4,16 +4,16 @@ package components
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // RiskIndicator renders a risk tier as a colored indicator.
 type RiskIndicator struct {
-	Tier       string
-	Compact    bool
-	ShowEmoji  bool
-	ShowLabel  bool
+	Tier      string
+	Compact   bool
+	ShowEmoji bool
+	ShowLabel bool
 }
 
 // NewRiskIndicator creates a new risk indicator.

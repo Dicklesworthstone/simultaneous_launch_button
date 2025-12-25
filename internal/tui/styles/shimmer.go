@@ -2,8 +2,8 @@
 package styles
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ShimmerState represents the current state of a shimmer animation.

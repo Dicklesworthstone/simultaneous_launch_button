@@ -401,7 +401,6 @@ func scanSessions(rows *sql.Rows) ([]*Session, error) {
 	return sessions, nil
 }
 
-
 // isUniqueConstraintError checks if the error is a unique constraint violation.
 // Note: We explicitly exclude FOREIGN KEY errors which also contain "constraint failed".
 func isUniqueConstraintError(err error) bool {

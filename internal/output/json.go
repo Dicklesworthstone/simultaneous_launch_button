@@ -39,4 +39,3 @@ func OutputJSONError(err error, code int) error {
 		Details: map[string]any{"code": code},
 	})
 }
-

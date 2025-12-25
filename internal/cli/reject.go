@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	flagRejectSessionID    string
-	flagRejectSessionKey   string
-	flagRejectReason       string
-	flagRejectComments     string
+	flagRejectSessionID     string
+	flagRejectSessionKey    string
+	flagRejectReason        string
+	flagRejectComments      string
 	flagRejectTargetProject string
 )
 

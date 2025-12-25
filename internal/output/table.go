@@ -23,4 +23,3 @@ func OutputList(items []string) {
 		fmt.Fprintln(os.Stderr, item)
 	}
 }
-

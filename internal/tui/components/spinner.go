@@ -2,9 +2,9 @@
 package components
 
 import (
+	"github.com/Dicklesworthstone/slb/internal/tui/theme"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/Dicklesworthstone/slb/internal/tui/theme"
 )
 
 // SpinnerStyle defines different spinner animation styles.

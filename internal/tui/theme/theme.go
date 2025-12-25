@@ -8,14 +8,14 @@ import (
 // Theme defines a color scheme for the TUI.
 type Theme struct {
 	// Primary colors
-	Mauve   lipgloss.Color // Titles, accents
-	Blue    lipgloss.Color // Section headers, links
-	Green   lipgloss.Color // Success, approved, commands
-	Yellow  lipgloss.Color // Warning, caution tier
-	Red     lipgloss.Color // Error, critical tier
-	Peach   lipgloss.Color // Dangerous tier
-	Teal    lipgloss.Color // Info, secondary
-	Pink    lipgloss.Color // Highlights
+	Mauve    lipgloss.Color // Titles, accents
+	Blue     lipgloss.Color // Section headers, links
+	Green    lipgloss.Color // Success, approved, commands
+	Yellow   lipgloss.Color // Warning, caution tier
+	Red      lipgloss.Color // Error, critical tier
+	Peach    lipgloss.Color // Dangerous tier
+	Teal     lipgloss.Color // Info, secondary
+	Pink     lipgloss.Color // Highlights
 	Flamingo lipgloss.Color // Alternative accent
 
 	// Text colors

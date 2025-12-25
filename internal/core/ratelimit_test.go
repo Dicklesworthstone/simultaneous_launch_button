@@ -86,8 +86,8 @@ func TestRateLimitErrorImplementsError(t *testing.T) {
 
 func TestRateLimitConfigNormalized(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      RateLimitConfig
+		name        string
+		input       RateLimitConfig
 		wantPending int
 		wantMinute  int
 		wantAction  RateLimitAction

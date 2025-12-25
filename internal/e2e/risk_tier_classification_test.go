@@ -116,20 +116,20 @@ func TestRiskTierClassification_EdgeCaseGaps(t *testing.T) {
 	// This test documents known limitations in pattern matching
 	gaps := []string{
 		// Case variations
-		"RM -RF /etc",           // uppercase not handled
-		"Rm -rF /etc",           // mixed case not handled
+		"RM -RF /etc", // uppercase not handled
+		"Rm -rF /etc", // mixed case not handled
 
 		// Whitespace variations
-		"rm  -rf   /etc",        // extra spaces not handled
-		"rm\t-rf\t/etc",         // tabs not handled
+		"rm  -rf   /etc", // extra spaces not handled
+		"rm\t-rf\t/etc",  // tabs not handled
 
 		// Quoting
-		"rm -rf '/etc'",         // single quotes not stripped
-		"rm -rf \"/etc\"",       // double quotes not stripped
+		"rm -rf '/etc'",   // single quotes not stripped
+		"rm -rf \"/etc\"", // double quotes not stripped
 
 		// Subshells and pipelines
-		"bash -c 'rm -rf /etc'", // subshell not unwrapped
-		"sh -c 'rm -rf /'",      // subshell not unwrapped
+		"bash -c 'rm -rf /etc'",           // subshell not unwrapped
+		"sh -c 'rm -rf /'",                // subshell not unwrapped
 		"find . -name '*.tmp' | xargs rm", // pipeline not analyzed
 	}
 
@@ -221,16 +221,16 @@ func TestRiskTierClassification_NoFalseNegatives(t *testing.T) {
 		cmd         string
 		minApproval int
 	}{
-		{"rm -rf /", 2},           // dangerous tier
-		{"rm -rf /*", 2},          // critical - wildcard catch
-		{"rm -rf /etc", 2},        // critical - system path
-		{"rm -rf /var", 2},        // critical - system path
-		{"rm -rf /home", 2},       // critical - system path
-		{"rm -rf /usr", 2},        // critical - system path
-		{"terraform destroy", 2},  // critical
+		{"rm -rf /", 2},          // dangerous tier
+		{"rm -rf /*", 2},         // critical - wildcard catch
+		{"rm -rf /etc", 2},       // critical - system path
+		{"rm -rf /var", 2},       // critical - system path
+		{"rm -rf /home", 2},      // critical - system path
+		{"rm -rf /usr", 2},       // critical - system path
+		{"terraform destroy", 2}, // critical
 		{"kubectl delete namespace default", 2},
 		{"git push --force origin main", 2},
-		{"DROP TABLE users", 1},   // dangerous
+		{"DROP TABLE users", 1}, // dangerous
 		{"TRUNCATE TABLE orders", 2},
 	}
 
@@ -266,10 +266,10 @@ func TestRiskTierClassification_KnownGaps(t *testing.T) {
 	// Commands that SHOULD require approval but currently DON'T
 	// These are documented gaps that represent security improvement opportunities
 	knownGaps := []string{
-		"dd if=/dev/zero of=/dev/sda",  // disk destruction - no pattern
-		"mkfs.ext4 /dev/sda1",          // filesystem format - no pattern
-		"git push -f origin master",    // short -f flag not caught
-		"chmod 777 /etc/passwd",        // chmod not in patterns
+		"dd if=/dev/zero of=/dev/sda",     // disk destruction - no pattern
+		"mkfs.ext4 /dev/sda1",             // filesystem format - no pattern
+		"git push -f origin master",       // short -f flag not caught
+		"chmod 777 /etc/passwd",           // chmod not in patterns
 		"terraform destroy -auto-approve", // with flag variant
 	}
 

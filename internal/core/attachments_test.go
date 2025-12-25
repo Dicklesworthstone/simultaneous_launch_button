@@ -598,4 +598,3 @@ func TestCappedBuffer_Write(t *testing.T) {
 		}
 	})
 }
-

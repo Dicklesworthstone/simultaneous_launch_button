@@ -19,7 +19,7 @@ type ClaudeHooks struct {
 type ClaudeHook struct {
 	Command  string            `json:"command"`
 	Input    map[string]string `json:"input,omitempty"`
-	OnBlock  *ClaudeOnBlock     `json:"on_block,omitempty"`
+	OnBlock  *ClaudeOnBlock    `json:"on_block,omitempty"`
 	Disabled bool              `json:"disabled,omitempty"`
 }
 
@@ -118,4 +118,3 @@ func InstallClaudeHooks(projectPath string, merge bool) (path string, merged boo
 
 	return path, true, nil
 }
-

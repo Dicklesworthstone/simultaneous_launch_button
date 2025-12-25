@@ -444,8 +444,8 @@ func TestStatusToEventType_AllStatuses(t *testing.T) {
 		{db.StatusExecutionFailed, "request_executed"},
 		{db.StatusTimeout, "request_timeout"},
 		{db.StatusCancelled, "request_cancelled"},
-		{db.StatusPending, ""},              // Pending is not a status change event
-		{db.RequestStatus("unknown"), ""},   // Unknown status returns empty
+		{db.StatusPending, ""},            // Pending is not a status change event
+		{db.RequestStatus("unknown"), ""}, // Unknown status returns empty
 	}
 
 	for _, tt := range tests {

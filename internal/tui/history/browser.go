@@ -25,18 +25,18 @@ const (
 
 // BrowserKeyMap defines keybindings for the history browser.
 type BrowserKeyMap struct {
-	Search     key.Binding
-	ClearSearch key.Binding
-	NextPage   key.Binding
-	PrevPage   key.Binding
-	Select     key.Binding
-	Back       key.Binding
-	Quit       key.Binding
-	Up         key.Binding
-	Down       key.Binding
-	FilterTier key.Binding
+	Search       key.Binding
+	ClearSearch  key.Binding
+	NextPage     key.Binding
+	PrevPage     key.Binding
+	Select       key.Binding
+	Back         key.Binding
+	Quit         key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	FilterTier   key.Binding
 	FilterStatus key.Binding
-	Export     key.Binding
+	Export       key.Binding
 }
 
 // DefaultBrowserKeyMap returns the default keybindings.
@@ -110,17 +110,17 @@ type Model struct {
 	keyMap      BrowserKeyMap
 
 	// View state
-	ready    bool
-	width    int
-	height   int
+	ready  bool
+	width  int
+	height int
 
 	// Data
 	rows       []HistoryRow
 	totalCount int
 
 	// Pagination
-	page       int
-	pageCount  int
+	page      int
+	pageCount int
 
 	// Selection
 	selectedIdx int

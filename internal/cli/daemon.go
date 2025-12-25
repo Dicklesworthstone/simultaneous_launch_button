@@ -284,4 +284,3 @@ func followFile(path string, w io.Writer) error {
 		return fmt.Errorf("tail %s: %w", path, err)
 	}
 }
-

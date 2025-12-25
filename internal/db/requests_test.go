@@ -778,11 +778,11 @@ func TestListRequestsByStatus_ParsesOptionalFields(t *testing.T) {
 		RiskTier:           RiskTierDangerous,
 		MinApprovals:       1,
 		Command: CommandSpec{
-			Raw:              "echo secret",
-			Argv:             []string{"echo", "secret"},
-			Cwd:              sess.ProjectPath,
-			Shell:            true,
-			DisplayRedacted:  "echo [REDACTED]",
+			Raw:               "echo secret",
+			Argv:              []string{"echo", "secret"},
+			Cwd:               sess.ProjectPath,
+			Shell:             true,
+			DisplayRedacted:   "echo [REDACTED]",
 			ContainsSensitive: true,
 		},
 		Justification: Justification{

@@ -13,12 +13,12 @@ import (
 
 // Review errors.
 var (
-	ErrRequestNotPending = errors.New("request is not pending")
-	ErrSelfReview        = errors.New("cannot review your own request")
-	ErrAlreadyReviewed   = errors.New("you have already reviewed this request")
-	ErrRequireDiffModel  = errors.New("different model required for approval")
-	ErrInvalidDecision   = errors.New("invalid decision (must be approve or reject)")
-	ErrMissingSessionKey = errors.New("session key required for signature")
+	ErrRequestNotPending  = errors.New("request is not pending")
+	ErrSelfReview         = errors.New("cannot review your own request")
+	ErrAlreadyReviewed    = errors.New("you have already reviewed this request")
+	ErrRequireDiffModel   = errors.New("different model required for approval")
+	ErrInvalidDecision    = errors.New("invalid decision (must be approve or reject)")
+	ErrMissingSessionKey  = errors.New("session key required for signature")
 	ErrSessionKeyMismatch = errors.New("session key does not match session")
 )
 
@@ -202,7 +202,7 @@ func (rs *ReviewService) SubmitReview(opts ReviewOptions) (*ReviewResult, error)
 		// Re-fetch request inside transaction to lock (if using serialized) or at least get fresh state
 		// Note: SQLite doesn't strictly lock on read unless BEGIN IMMEDIATE, but this helps.
 		// However, CreateReviewTx (insert) will lock the DB for writing.
-		
+
 		// Check duplicate again inside transaction
 		if exists, err := rs.db.HasReviewerAlreadyReviewedTx(tx, opts.RequestID, opts.SessionID); err != nil {
 			return err

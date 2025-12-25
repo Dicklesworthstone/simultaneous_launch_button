@@ -196,26 +196,26 @@ To get the command hash for --ack, run:
 
 		// Build output
 		type emergencyResult struct {
-			Command    string `json:"command"`
-			Hash       string `json:"hash"`
-			ExitCode   int    `json:"exit_code"`
-			DurationMs int64  `json:"duration_ms"`
-			LogPath    string `json:"log_path"`
+			Command      string `json:"command"`
+			Hash         string `json:"hash"`
+			ExitCode     int    `json:"exit_code"`
+			DurationMs   int64  `json:"duration_ms"`
+			LogPath      string `json:"log_path"`
 			RollbackPath string `json:"rollback_path,omitempty"`
-			Reason     string `json:"reason"`
-			Actor      string `json:"actor"`
-			ExecutedAt string `json:"executed_at"`
-			Error      string `json:"error,omitempty"`
+			Reason       string `json:"reason"`
+			Actor        string `json:"actor"`
+			ExecutedAt   string `json:"executed_at"`
+			Error        string `json:"error,omitempty"`
 		}
 
 		resp := emergencyResult{
-			Command:    command,
-			Hash:       commandHash,
-			LogPath:    logPath,
+			Command:      command,
+			Hash:         commandHash,
+			LogPath:      logPath,
 			RollbackPath: rollbackPath,
-			Reason:     flagEmergencyReason,
-			Actor:      GetActor(),
-			ExecutedAt: time.Now().Format(time.RFC3339),
+			Reason:       flagEmergencyReason,
+			Actor:        GetActor(),
+			ExecutedAt:   time.Now().Format(time.RFC3339),
 		}
 
 		if result != nil {

@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	flagApproveSessionID    string
-	flagApproveSessionKey   string
-	flagApproveComments     string
+	flagApproveSessionID     string
+	flagApproveSessionKey    string
+	flagApproveComments      string
 	flagApproveTargetProject string
 
 	// Structured response flags

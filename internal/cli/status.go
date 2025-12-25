@@ -57,12 +57,12 @@ Use --wait to block until the request reaches a terminal state
 
 		// Build response
 		type reviewView struct {
-			ReviewID    string `json:"review_id"`
-			Reviewer    string `json:"reviewer"`
-			Model       string `json:"model"`
-			Decision    string `json:"decision"`
-			Comments    string `json:"comments,omitempty"`
-			CreatedAt   string `json:"created_at"`
+			ReviewID  string `json:"review_id"`
+			Reviewer  string `json:"reviewer"`
+			Model     string `json:"model"`
+			Decision  string `json:"decision"`
+			Comments  string `json:"comments,omitempty"`
+			CreatedAt string `json:"created_at"`
 		}
 
 		type statusView struct {

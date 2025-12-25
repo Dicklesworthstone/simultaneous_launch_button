@@ -384,9 +384,9 @@ func TestNewTCPServer_AddressInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	
+
 	addr := l.Addr().String()
-	
+
 	logger := log.New(io.Discard)
 	_, err = NewTCPServer(TCPServerOptions{
 		Addr: addr,

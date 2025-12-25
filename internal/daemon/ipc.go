@@ -99,9 +99,9 @@ type IPCServer struct {
 	nextSubID     atomic.Int64
 
 	// Shutdown coordination.
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 	startMu   sync.Mutex
 	startDone chan struct{}
 

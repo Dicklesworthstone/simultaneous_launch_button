@@ -108,12 +108,12 @@ This data helps improve pattern classification and identify risky commands.`,
 		out := output.New(output.Format(GetOutput()))
 		return out.Write(map[string]any{
 			"id":                  outcome.ID,
-			"request_id":         outcome.RequestID,
-			"caused_problems":    outcome.CausedProblems,
+			"request_id":          outcome.RequestID,
+			"caused_problems":     outcome.CausedProblems,
 			"problem_description": outcome.ProblemDescription,
-			"human_rating":       outcome.HumanRating,
-			"human_notes":        outcome.HumanNotes,
-			"recorded_at":        outcome.CreatedAt.Format(time.RFC3339),
+			"human_rating":        outcome.HumanRating,
+			"human_notes":         outcome.HumanNotes,
+			"recorded_at":         outcome.CreatedAt.Format(time.RFC3339),
 		})
 	},
 }
@@ -143,7 +143,7 @@ var outcomeListCmd = &cobra.Command{
 		result := make([]map[string]any, len(outcomes))
 		for i, o := range outcomes {
 			item := map[string]any{
-				"id":               o.ID,
+				"id":              o.ID,
 				"request_id":      o.RequestID,
 				"caused_problems": o.CausedProblems,
 				"created_at":      o.CreatedAt.Format(time.RFC3339),

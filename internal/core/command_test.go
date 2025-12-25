@@ -90,9 +90,9 @@ func TestComputeCommandHashUniqueness(t *testing.T) {
 	// Different specs should produce different hashes
 	specs := []db.CommandSpec{
 		{Raw: "ls", Cwd: "/tmp", Shell: false},
-		{Raw: "ls", Cwd: "/home", Shell: false},    // different cwd
-		{Raw: "ls -la", Cwd: "/tmp", Shell: false}, // different raw
-		{Raw: "ls", Cwd: "/tmp", Shell: true},      // different shell
+		{Raw: "ls", Cwd: "/home", Shell: false},                      // different cwd
+		{Raw: "ls -la", Cwd: "/tmp", Shell: false},                   // different raw
+		{Raw: "ls", Cwd: "/tmp", Shell: true},                        // different shell
 		{Raw: "ls", Cwd: "/tmp", Argv: []string{"ls"}, Shell: false}, // with argv
 	}
 

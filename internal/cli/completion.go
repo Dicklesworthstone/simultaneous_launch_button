@@ -75,4 +75,3 @@ func completeSessionIDs(cmd *cobra.Command, args []string, toComplete string) ([
 
 	return out, cobra.ShellCompDirectiveNoFileComp
 }
-

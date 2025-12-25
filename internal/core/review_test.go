@@ -575,13 +575,13 @@ func TestDetermineNewStatus(t *testing.T) {
 	defer dbConn.Close()
 
 	tests := []struct {
-		name         string
-		resolution   ConflictResolution
-		request      *db.Request
-		decision     db.Decision
-		approvals    int
-		rejections   int
-		wantStatus   db.RequestStatus
+		name       string
+		resolution ConflictResolution
+		request    *db.Request
+		decision   db.Decision
+		approvals  int
+		rejections int
+		wantStatus db.RequestStatus
 	}{
 		// ConflictAnyRejectionBlocks tests
 		{

@@ -38,4 +38,3 @@ func GetOutputMode() OutputMode {
 func IsJSON() bool {
 	return GetOutputMode() == OutputModeJSON
 }
-

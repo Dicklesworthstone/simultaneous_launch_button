@@ -58,8 +58,8 @@ Use --session-id/-s to specify your session if not using environment.`,
 
 		out := output.New(output.Format(GetOutput()))
 		return out.Write(map[string]any{
-			"request_id":  requestID,
-			"status":      "cancelled",
+			"request_id":   requestID,
+			"status":       "cancelled",
 			"cancelled_at": time.Now().UTC().Format(time.RFC3339),
 		})
 	},

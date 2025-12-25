@@ -16,9 +16,9 @@ import (
 //	  -> Result: sess_abc123
 //	  -> DB state: 1 session, 0 requests
 type StepLogger struct {
-	t      *testing.T
-	out    io.Writer
-	start  time.Time
+	t     *testing.T
+	out   io.Writer
+	start time.Time
 }
 
 // NewStepLogger creates a logger for the given test.

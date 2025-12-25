@@ -151,4 +151,3 @@ func init() {
 	claudeHooksCmd.Flags().Bool("preview", false, "Print what would be written (default)")
 	claudeHooksCmd.Flags().Bool("merge", true, "Merge with existing hooks.json (default true)")
 }
-

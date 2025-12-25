@@ -2,8 +2,8 @@
 package styles
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Dicklesworthstone/slb/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Styles contains all the styled lipgloss renderers.
@@ -42,10 +42,10 @@ type Styles struct {
 	Selected   lipgloss.Style
 
 	// Layout helpers
-	Border    lipgloss.Style
-	NoBorder  lipgloss.Style
-	Padded    lipgloss.Style
-	Centered  lipgloss.Style
+	Border   lipgloss.Style
+	NoBorder lipgloss.Style
+	Padded   lipgloss.Style
+	Centered lipgloss.Style
 }
 
 // New creates a new Styles instance from the current theme.
