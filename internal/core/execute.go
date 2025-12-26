@@ -240,11 +240,14 @@ func (e *Executor) ExecuteApprovedRequest(ctx context.Context, opts ExecuteOptio
 		}
 	}
 
-	// Update execution details
-	exitCode := result.ExitCode
-	durationMs := result.Duration.Milliseconds()
-	exec.ExitCode = &exitCode
-	exec.DurationMs = &durationMs
+	// Update execution details - only set exit code and duration when we have valid results.
+	// When cmdResult is nil (timeout before process started, or other error), leave as NULL.
+	if cmdResult != nil {
+		exitCode := result.ExitCode
+		durationMs := result.Duration.Milliseconds()
+		exec.ExitCode = &exitCode
+		exec.DurationMs = &durationMs
+	}
 	_ = e.db.UpdateRequestExecution(opts.RequestID, exec)
 
 	// Notify (best effort)
