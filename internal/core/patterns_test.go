@@ -60,6 +60,13 @@ func TestClassifyCommand(t *testing.T) {
 			wantNeedsApproval: true,
 		},
 		{
+			name:              "rm -fr local (reversed flags)",
+			cmd:               "rm -fr ./build",
+			wantTier:          RiskTierDangerous,
+			wantApprovals:     1,
+			wantNeedsApproval: true,
+		},
+		{
 			name:              "git reset --hard",
 			cmd:               "git reset --hard HEAD~3",
 			wantTier:          RiskTierDangerous,

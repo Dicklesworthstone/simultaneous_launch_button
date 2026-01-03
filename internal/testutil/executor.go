@@ -4,8 +4,27 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"sync"
 )
+
+// TruePath returns the platform-appropriate path to the 'true' command.
+// On macOS, 'true' is at /usr/bin/true; on Linux, it's at /bin/true.
+func TruePath() string {
+	if runtime.GOOS == "darwin" {
+		return "/usr/bin/true"
+	}
+	return "/bin/true"
+}
+
+// FalsePath returns the platform-appropriate path to the 'false' command.
+// On macOS, 'false' is at /usr/bin/false; on Linux, it's at /bin/false.
+func FalsePath() string {
+	if runtime.GOOS == "darwin" {
+		return "/usr/bin/false"
+	}
+	return "/bin/false"
+}
 
 // CommandExecutor abstracts command execution for testing.
 // Production code can use RealExecutor, while tests can use MockExecutor.

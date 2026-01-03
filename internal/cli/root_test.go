@@ -237,7 +237,9 @@ func TestGetDB(t *testing.T) {
 
 		got := GetDB()
 		// When in a directory, GetDB returns path based on cwd
-		expected := filepath.Join(tmpDir, ".slb", "state.db")
+		// Resolve symlinks for comparison (macOS /var -> /private/var)
+		tmpDirResolved, _ := filepath.EvalSymlinks(tmpDir)
+		expected := filepath.Join(tmpDirResolved, ".slb", "state.db")
 		if got != expected {
 			t.Errorf("GetDB() = %v, want %v", got, expected)
 		}

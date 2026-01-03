@@ -104,7 +104,7 @@ func TestRollbackCommand_RequiresRollbackData(t *testing.T) {
 		testutil.WithAgent("TestAgent"),
 	)
 	req := testutil.MakeRequest(t, h.DB, sess,
-		testutil.WithCommand("/bin/true", h.ProjectDir, true),
+		testutil.WithCommand(testutil.TruePath(), h.ProjectDir, true),
 	)
 	// Recompute hash using core.ComputeCommandHash
 	req.Command.Hash = db.ComputeCommandHash(req.Command)

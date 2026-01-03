@@ -12,6 +12,7 @@ import (
 
 	"github.com/Dicklesworthstone/slb/internal/db"
 	"github.com/Dicklesworthstone/slb/internal/integrations"
+	"github.com/Dicklesworthstone/slb/internal/testutil"
 )
 
 func TestTierHigher(t *testing.T) {
@@ -1008,10 +1009,11 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
-		// Use /bin/true which is a simple binary that exits with 0
+		// Use a cross-platform 'true' command which exits with 0
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1081,10 +1083,11 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
-		// Use /bin/false which is a simple binary that exits with 1
+		// Use a cross-platform 'false' command which exits with 1
+		falsePath := testutil.FalsePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/false",
-			Argv: []string{"/bin/false"},
+			Raw:  falsePath,
+			Argv: []string{falsePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1152,9 +1155,10 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1297,9 +1301,10 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		_ = os.Chdir(tmpDir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1364,9 +1369,10 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		// Use a simple command that would modify the test file
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1436,9 +1442,10 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)
@@ -1495,9 +1502,10 @@ func TestExecuteApprovedRequest(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
+		truePath := testutil.TruePath()
 		cmdSpec := db.CommandSpec{
-			Raw:  "/bin/true",
-			Argv: []string{"/bin/true"},
+			Raw:  truePath,
+			Argv: []string{truePath},
 			Cwd:  tmpDir,
 		}
 		cmdSpec.Hash = db.ComputeCommandHash(cmdSpec)

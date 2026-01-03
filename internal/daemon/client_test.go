@@ -399,7 +399,7 @@ func TestClient_GetStatusInfo_SLBHostFallbackToUnix(t *testing.T) {
 	t.Setenv("SLB_HOST", "127.0.0.1:0")
 	t.Setenv("SLB_SESSION_KEY", "ignored")
 
-	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "i.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -485,8 +485,8 @@ func TestStartDaemonWithOptions_DaemonModeRunsAndStops(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "daemon.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "d.sock")
 	pidFile := filepath.Join(tmp, "daemon.pid")
 
 	t.Setenv(daemonModeEnv, "1")
@@ -523,7 +523,7 @@ func TestStartDaemonWithOptions_DaemonModeRunsAndStops(t *testing.T) {
 }
 
 func TestStopDaemonWithOptions_MissingPIDFileReturnsError(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := shortSocketDir(t)
 	err := StopDaemonWithOptions(ServerOptions{
 		PIDFile: filepath.Join(tmp, "missing.pid"),
 	}, 50*time.Millisecond)
@@ -792,7 +792,7 @@ func TestRunDaemon_StartsTCPListenerFromConfigAndValidatesAuth(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	project := t.TempDir()
+	project := shortSocketDir(t)
 	slbDir := filepath.Join(project, ".slb")
 	if err := os.MkdirAll(slbDir, 0755); err != nil {
 		t.Fatalf("mkdir .slb: %v", err)
@@ -1224,7 +1224,7 @@ func TestWithDaemonOrFallback_DaemonRunning(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -1265,7 +1265,7 @@ func TestTryDaemon_DaemonRunning(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -1306,7 +1306,7 @@ func TestMustHaveDaemon_DaemonRunning(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -1336,7 +1336,7 @@ func TestGetFeatureAvailability_DaemonRunning(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)

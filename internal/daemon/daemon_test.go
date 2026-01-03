@@ -31,9 +31,9 @@ func TestDaemonModeEnabled(t *testing.T) {
 }
 
 func TestRunDaemon_WritesPIDAndSocketAndCleansUp(t *testing.T) {
-	tmp := t.TempDir()
-	pidFile := filepath.Join(tmp, "slb-daemon.pid")
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	pidFile := filepath.Join(tmp, "slb.pid")
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	logger := log.NewWithOptions(io.Discard, log.Options{})
 

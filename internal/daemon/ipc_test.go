@@ -29,7 +29,7 @@ func TestNewIPCServer(t *testing.T) {
 
 	t.Run("creates server with valid socket path", func(t *testing.T) {
 		t.Parallel()
-		socketPath := filepath.Join(t.TempDir(), "test.sock")
+		socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 		logger := newTestLogger()
 
 		srv, err := NewIPCServer(socketPath, logger)
@@ -58,7 +58,7 @@ func TestNewIPCServer(t *testing.T) {
 
 	t.Run("refuses to delete non-socket file", func(t *testing.T) {
 		t.Parallel()
-		socketPath := filepath.Join(t.TempDir(), "regular.file")
+		socketPath := filepath.Join(shortSocketDir(t), "r.file")
 
 		// Create a regular file at the socket path.
 		if err := os.WriteFile(socketPath, []byte("not a socket"), 0644); err != nil {
@@ -81,7 +81,7 @@ func TestNewIPCServer(t *testing.T) {
 
 	t.Run("removes stale socket", func(t *testing.T) {
 		t.Parallel()
-		socketPath := filepath.Join(t.TempDir(), "stale.sock")
+		socketPath := filepath.Join(shortSocketDir(t), "s.sock")
 
 		// Create a real unix socket to simulate a stale one.
 		// We create a listener but don't close it until after stat check.
@@ -125,7 +125,7 @@ func TestNewIPCServer(t *testing.T) {
 
 	t.Run("refuses to delete directory", func(t *testing.T) {
 		t.Parallel()
-		socketPath := filepath.Join(t.TempDir(), "subdir")
+		socketPath := filepath.Join(shortSocketDir(t), "sub")
 
 		// Create a directory at the socket path.
 		if err := os.Mkdir(socketPath, 0755); err != nil {
@@ -142,7 +142,7 @@ func TestNewIPCServer(t *testing.T) {
 func TestIPCServer_PingMethod(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "ping.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "p.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -206,7 +206,7 @@ func TestIPCServer_PingMethod(t *testing.T) {
 func TestIPCServer_StatusMethod(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "status.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "st.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -274,7 +274,7 @@ func TestIPCServer_StatusMethod(t *testing.T) {
 func TestIPCServer_NotifyMethod(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "notify.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "n.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -334,7 +334,7 @@ func TestIPCServer_NotifyMethod(t *testing.T) {
 func TestIPCServer_NotifyMethod_MissingType(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "notify-missing.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "nm.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -389,7 +389,7 @@ func TestIPCServer_NotifyMethod_MissingType(t *testing.T) {
 func TestIPCServer_MethodNotFound(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "unknown.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "unk.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -442,7 +442,7 @@ func TestIPCServer_MethodNotFound(t *testing.T) {
 func TestIPCServer_ParseError(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "parse.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "pe.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -493,7 +493,7 @@ func TestIPCServer_ParseError(t *testing.T) {
 func TestIPCServer_Subscribe(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "subscribe.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "sub.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -578,7 +578,7 @@ func TestIPCServer_Subscribe(t *testing.T) {
 func TestIPCServer_MultipleClients(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "multi.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "m.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -643,7 +643,7 @@ func TestIPCServer_MultipleClients(t *testing.T) {
 func TestIPCServer_GracefulShutdown(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "shutdown.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "sd.sock")
 	srv, err := NewIPCServer(socketPath, newTestLogger())
 	if err != nil {
 		t.Fatalf("NewIPCServer failed: %v", err)
@@ -703,7 +703,7 @@ func TestIPCClient_PingStatusNotify_Unix(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "i.sock")
 	logger := log.New(io.Discard)
 	srv, err := NewIPCServer(socketPath, logger)
 	if err != nil {
@@ -747,7 +747,7 @@ func TestIPCClient_SubscribeReceivesEvents_Unix(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "ev.sock")
 	logger := log.New(io.Discard)
 	srv, err := NewIPCServer(socketPath, logger)
 	if err != nil {
@@ -818,7 +818,7 @@ func TestIPCClient_ConnectFallsBackToUnixWhenSLBHostInvalid(t *testing.T) {
 	t.Setenv("SLB_HOST", "127.0.0.1:0")
 	t.Setenv("SLB_SESSION_KEY", "ignored")
 
-	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "fb.sock")
 	logger := log.New(io.Discard)
 	srv, err := NewIPCServer(socketPath, logger)
 	if err != nil {

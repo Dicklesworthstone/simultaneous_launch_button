@@ -27,8 +27,8 @@ func TestNewIPCServer_ListenFailure(t *testing.T) {
 }
 
 func TestNewIPCServer_ExistingFileNotSocket(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 	if err := os.WriteFile(socketPath, []byte("file"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +41,8 @@ func TestNewIPCServer_ExistingFileNotSocket(t *testing.T) {
 }
 
 func TestIPCClient_ConnectionRefused(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	client := NewIPCClient(socketPath)
 	err := client.Connect(context.Background())
@@ -53,8 +53,8 @@ func TestIPCClient_ConnectionRefused(t *testing.T) {
 
 func TestIPCClient_Call_WriteError(t *testing.T) {
 	// Create a listener that closes immediately
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -84,8 +84,8 @@ func TestIPCClient_Call_WriteError(t *testing.T) {
 
 func TestIPCClient_Call_ReadError(t *testing.T) {
 	// Create a listener that accepts but sends garbage or nothing
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -116,8 +116,8 @@ func TestIPCClient_Call_ReadError(t *testing.T) {
 }
 
 func TestIPCClient_Subscribe_WriteError(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -145,8 +145,8 @@ func TestIPCClient_Subscribe_WriteError(t *testing.T) {
 }
 
 func TestIPCClient_Notify_WriteError(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -174,8 +174,8 @@ func TestIPCClient_Notify_WriteError(t *testing.T) {
 }
 
 func TestIPCClient_Status_WriteError(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -203,8 +203,8 @@ func TestIPCClient_Status_WriteError(t *testing.T) {
 }
 
 func TestIPCServer_Start_ClosedListener(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 	logger := log.New(os.Stdout)
 
 	srv, err := NewIPCServer(socketPath, logger)
@@ -222,8 +222,8 @@ func TestIPCServer_Start_ClosedListener(t *testing.T) {
 }
 
 func TestIPCServer_StreamEvents_WriteError(t *testing.T) {
-	tmp := t.TempDir()
-	socketPath := filepath.Join(tmp, "slb.sock")
+	tmp := shortSocketDir(t)
+	socketPath := filepath.Join(tmp, "s.sock")
 	logger := log.New(os.Stdout)
 
 	srv, err := NewIPCServer(socketPath, logger)

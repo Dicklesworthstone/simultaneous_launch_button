@@ -46,7 +46,7 @@ func TestIPCClient_Connect_AlreadyConnected(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -80,7 +80,7 @@ func TestIPCClient_Ping_Success(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -116,7 +116,7 @@ func TestIPCClient_Status_Success(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -160,7 +160,7 @@ func TestIPCClient_Notify_Success(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -205,7 +205,7 @@ func TestIPCClient_Subscribe_Success(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -384,7 +384,7 @@ func TestIPCClient_Connect_TCPFallback(t *testing.T) {
 	t.Setenv("SLB_HOST", "127.0.0.1:65534") // High port unlikely to be in use
 	t.Setenv("SLB_SESSION_KEY", "test-key")
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -433,7 +433,7 @@ func TestIPCClient_ConnectTCP_HandshakeWriteError(t *testing.T) {
 	}()
 
 	// Set up Unix socket as fallback
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -461,7 +461,7 @@ func TestIPCClient_Close_Connected(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -554,7 +554,7 @@ func TestIPCClient_Call_MarshalParamsError(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -587,7 +587,7 @@ func TestIPCClient_ContextCancellation(t *testing.T) {
 		t.Skip("unix socket tests not supported on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -656,7 +656,7 @@ func TestIPCClient_SLBHostEmptyString(t *testing.T) {
 	// Ensure SLB_HOST is not set (empty)
 	t.Setenv("SLB_HOST", "")
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -686,7 +686,7 @@ func TestIPCClient_SLBHostWhitespaceOnly(t *testing.T) {
 	// Set SLB_HOST to whitespace (should be trimmed and ignored)
 	t.Setenv("SLB_HOST", "   ")
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)
@@ -718,7 +718,7 @@ func TestIPCClient_ConnectAndUnixFallbackNoEnv(t *testing.T) {
 	// Unset SLB_HOST environment variable
 	os.Unsetenv("SLB_HOST")
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(shortSocketDir(t), "t.sock")
 	srv, err := NewIPCServer(socketPath, log.New(io.Discard))
 	if err != nil {
 		t.Fatalf("NewIPCServer: %v", err)

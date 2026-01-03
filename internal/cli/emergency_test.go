@@ -157,7 +157,7 @@ func TestEmergencyCommand_ExecutesWithValidAck(t *testing.T) {
 	h := testutil.NewHarness(t)
 	resetEmergencyFlags()
 
-	command := "/bin/true"
+	command := testutil.TruePath()
 	hash := sha256.Sum256([]byte(command))
 	commandHash := hex.EncodeToString(hash[:])
 

@@ -138,9 +138,9 @@ func TestExecuteCommand_ExecutesApprovedRequest(t *testing.T) {
 		testutil.WithProject(h.ProjectDir),
 		testutil.WithAgent("TestAgent"),
 	)
-	// Use /bin/true which should always succeed
+	// Use cross-platform 'true' command which should always succeed
 	req := testutil.MakeRequest(t, h.DB, sess,
-		testutil.WithCommand("/bin/true", h.ProjectDir, true),
+		testutil.WithCommand(testutil.TruePath(), h.ProjectDir, true),
 	)
 	// Recompute hash using core.ComputeCommandHash (executor uses this, not db's version)
 	req.Command.Hash = db.ComputeCommandHash(req.Command)
@@ -220,9 +220,9 @@ func TestExecuteCommand_CustomTimeout(t *testing.T) {
 		testutil.WithProject(h.ProjectDir),
 		testutil.WithAgent("TestAgent"),
 	)
-	// Use /bin/true for reliable quick execution
+	// Use cross-platform 'true' command for reliable quick execution
 	req := testutil.MakeRequest(t, h.DB, sess,
-		testutil.WithCommand("/bin/true", h.ProjectDir, true),
+		testutil.WithCommand(testutil.TruePath(), h.ProjectDir, true),
 	)
 	// Recompute hash using core.ComputeCommandHash
 	req.Command.Hash = db.ComputeCommandHash(req.Command)

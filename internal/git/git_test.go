@@ -134,7 +134,10 @@ func TestRepoHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRoot: %v", err)
 	}
-	if root != repo {
+	// Resolve symlinks for comparison (macOS /var -> /private/var)
+	rootResolved, _ := filepath.EvalSymlinks(root)
+	repoResolved, _ := filepath.EvalSymlinks(repo)
+	if rootResolved != repoResolved {
 		t.Fatalf("GetRoot=%q want %q", root, repo)
 	}
 
