@@ -106,7 +106,7 @@ Checks:
 }
 
 var hookTestCmd = &cobra.Command{
-	Use:   "test [command]",
+	Use:   "test <command>",
 	Short: "Test hook behavior for a command",
 	Long: `Test what the hook would do for a given command.
 
@@ -116,7 +116,7 @@ Useful for verifying pattern classification and approval logic.
 Examples:
   slb hook test "rm -rf node_modules"
   slb hook test "git push --force"`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: runHookTest,
 }
 
@@ -436,12 +436,7 @@ func runHookStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runHookTest(cmd *cobra.Command, args []string) error {
-	var command string
-	if len(args) > 0 {
-		command = args[0]
-	} else {
-		return fmt.Errorf("command argument required")
-	}
+	command := args[0] // Args: ExactArgs(1) ensures this exists
 
 	result := core.Classify(command, "")
 
@@ -562,19 +557,23 @@ def main():
         print(json.dumps(daemon_response))
         return
 
-    # Fall back to local classification
+    # Fall back to local classification (match daemon behavior)
     tier, min_approvals = classify(command)
-    blocked, message = is_blocked(command)
 
-    if blocked:
+    if tier == 'critical':
         print(json.dumps({
             "action": "block",
-            "message": message
+            "message": f"CRITICAL: Requires {min_approvals} approvals. Use 'slb request' to submit."
+        }))
+    elif tier == 'dangerous':
+        print(json.dumps({
+            "action": "block",
+            "message": f"DANGEROUS: Requires {min_approvals} approval. Use 'slb request' to submit."
         }))
     elif tier == 'caution':
         print(json.dumps({
             "action": "ask",
-            "message": f"SLB: {tier.upper()} tier command. Proceed?"
+            "message": "SLB: CAUTION tier command. Proceed?"
         }))
     else:
         print(json.dumps({"action": "allow"}))

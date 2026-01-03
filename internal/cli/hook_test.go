@@ -59,9 +59,9 @@ func newTestHookCmd(dbPath string) *cobra.Command {
 	}
 
 	testCmd := &cobra.Command{
-		Use:   "test [command]",
+		Use:   "test <command>",
 		Short: "Test hook behavior for a command",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE:  hookTestCmd.RunE,
 	}
 
@@ -199,7 +199,7 @@ func TestHookTestCommand_RequiresCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when command is missing")
 	}
-	if !strings.Contains(err.Error(), "command argument required") {
+	if !strings.Contains(err.Error(), "accepts 1 arg") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
