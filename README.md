@@ -711,6 +711,441 @@ All config options can be set via environment:
 | `SLB_DAEMON_TCP_ADDR` | TCP listen address |
 | `SLB_TRUSTED_SELF_APPROVE` | Comma-separated trusted agents |
 
+## Agent Event Streaming
+
+The `slb watch` command provides real-time event streaming for agent workflows.
+
+### Event Stream Format
+
+Events are streamed as newline-delimited JSON (NDJSON) for easy programmatic consumption:
+
+```bash
+slb watch --session-id <id>
+```
+
+Output:
+```json
+{"type":"request_pending","request_id":"abc123","tier":"dangerous","command":"rm -rf ./build","ts":"..."}
+{"type":"request_approved","request_id":"abc123","reviewer":"BlueLake","ts":"..."}
+{"type":"request_executed","request_id":"abc123","exit_code":0,"ts":"..."}
+```
+
+### Event Types
+
+| Event | Description |
+|-------|-------------|
+| `request_pending` | New request awaiting approval |
+| `request_approved` | Request was approved |
+| `request_rejected` | Request was rejected |
+| `request_executed` | Approved request was executed |
+| `request_timeout` | Request timed out waiting for approval |
+| `request_cancelled` | Request was cancelled |
+
+### Transport Modes
+
+**Daemon IPC (preferred)**: Real-time streaming via Unix socket subscription when the daemon is running.
+
+**Polling fallback**: If the daemon is unavailable, the command falls back to database polling at configurable intervals:
+
+```bash
+slb watch --poll-interval 5s
+```
+
+### Auto-Approve Mode
+
+For reviewer agents, auto-approve CAUTION tier requests:
+
+```bash
+slb watch --session-id <id> --auto-approve-caution
+```
+
+## Request Attachments
+
+Requests can include attachments to provide context for reviewers.
+
+### Attachment Types
+
+| Type | Description |
+|------|-------------|
+| `file` | File contents (base64 encoded) |
+| `image` | Screenshots or diagrams (validated dimensions) |
+| `command_output` | Output from context-gathering commands |
+
+### Adding Attachments
+
+```bash
+# Attach file
+slb request "DROP TABLE users" --reason "..." --attach ./schema.sql
+
+# Attach image (screenshot)
+slb request "kubectl delete deployment" --reason "..." --attach ./dashboard.png
+
+# Attach command output
+slb request "terraform destroy" --reason "..." --attach-cmd "terraform plan -destroy"
+```
+
+### Attachment Limits
+
+```toml
+[attachments]
+max_file_size = 1048576        # 1MB
+max_output_size = 102400       # 100KB
+max_command_runtime = 10       # seconds
+max_image_dimension = 4096     # pixels
+```
+
+### Viewing Attachments
+
+```bash
+slb show <request-id> --with-attachments
+```
+
+## Session Management
+
+Sessions track agent identity and activity for audit and coordination.
+
+### Session Lifecycle
+
+```bash
+# Start session (creates session_key for signing)
+slb session start --agent "GreenLake" --program "claude-code" --model "opus"
+
+# Resume after crash (preserves session_key)
+slb session resume --agent "GreenLake" --create-if-missing
+
+# Force resume (ends mismatched session)
+slb session resume --agent "GreenLake" --force
+
+# Heartbeat (update last_active for GC)
+slb session heartbeat --session-id <id>
+
+# End session gracefully
+slb session end --session-id <id>
+```
+
+### Session Garbage Collection
+
+Clean up stale sessions from crashed agents:
+
+```bash
+# Show what would be cleaned (dry run)
+slb session gc --dry-run --threshold 30m
+
+# Clean sessions inactive > 2 hours
+slb session gc --threshold 2h --force
+
+# Interactive cleanup (prompts for each)
+slb session gc --threshold 1h
+```
+
+### Rate Limit Reset
+
+Reset rate limits for a session (admin use):
+
+```bash
+slb session reset-limits --session-id <id>
+```
+
+## Emergency Override
+
+For true emergencies, humans can bypass the approval process with extensive logging.
+
+### Usage
+
+```bash
+# Interactive (prompts for confirmation)
+slb emergency-execute "rm -rf /tmp/broken" --reason "System emergency: disk full"
+
+# Non-interactive (requires hash acknowledgment)
+HASH=$(echo -n "rm -rf /tmp/broken" | sha256sum | cut -d' ' -f1)
+slb emergency-execute "rm -rf /tmp/broken" --reason "Emergency" --yes --ack $HASH
+```
+
+### Safeguards
+
+1. **Mandatory reason**: Must provide `--reason` explaining the bypass
+2. **Hash acknowledgment**: Non-interactive use requires command hash via `--ack`
+3. **Extensive logging**: Command, reason, timestamp, and operator identity logged
+4. **Rollback capture**: Optional state capture with `--capture-rollback`
+
+### Audit Entry
+
+Emergency executions create a permanent audit record:
+
+```json
+{
+  "type": "emergency_execute",
+  "command": "rm -rf /tmp/broken",
+  "command_hash": "abc123...",
+  "reason": "System emergency: disk full",
+  "operator": "human",
+  "timestamp": "2026-01-03T10:30:00Z",
+  "exit_code": 0
+}
+```
+
+## Outcome Tracking
+
+Record execution feedback to improve pattern classification over time.
+
+### Recording Outcomes
+
+After execution, record whether the command caused problems:
+
+```bash
+# No problems
+slb outcome record <request-id>
+
+# Problems occurred
+slb outcome record <request-id> --problems --description "Deleted wrong files"
+
+# With rating and notes
+slb outcome record <request-id> --rating 4 --notes "Worked as expected"
+```
+
+### Viewing Outcomes
+
+```bash
+# List recent outcomes
+slb outcome list
+
+# Only problematic executions
+slb outcome list --problems-only --limit 50
+
+# Statistics summary
+slb outcome stats
+```
+
+### Statistics Output
+
+```json
+{
+  "total_executions": 150,
+  "problematic": 3,
+  "success_rate": 0.98,
+  "by_tier": {
+    "critical": {"total": 10, "problems": 1},
+    "dangerous": {"total": 50, "problems": 2},
+    "caution": {"total": 90, "problems": 0}
+  }
+}
+```
+
+This data enables:
+- Identifying patterns that should be upgraded/downgraded
+- Detecting agents that frequently cause problems
+- Improving justification quality requirements
+
+## TUI Dashboard
+
+The interactive terminal UI provides a comprehensive overview for human reviewers.
+
+### Launching
+
+```bash
+slb tui
+```
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  SLB Dashboard                                                       │
+├─────────────────┬───────────────────────────────────────────────────┤
+│  AGENTS         │  PENDING REQUESTS                                  │
+│  ───────        │  ────────────────                                  │
+│▸ GreenLake      │▸ abc123 CRITICAL rm -rf /etc      BlueLake 2m     │
+│  BlueLake       │  def456 DANGEROUS git reset --hard GreenLake 5m   │
+│  RedStone       │  ghi789 CAUTION   npm uninstall   RedStone 10m    │
+│                 │                                                    │
+├─────────────────┴───────────────────────────────────────────────────┤
+│  ACTIVITY                                                            │
+│  ────────                                                            │
+│  10:30:15 GreenLake approved abc123                                  │
+│  10:28:42 BlueLake requested def456 (DANGEROUS)                      │
+│  10:25:00 RedStone executed xyz999 (exit 0)                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Keyboard Navigation
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Cycle focus between panels |
+| `↑/↓` | Navigate within panel |
+| `Enter` | View selected request details |
+| `a` | Approve selected request |
+| `r` | Reject selected request |
+| `p` | Open pattern management |
+| `h` | Open history view |
+| `q` | Quit |
+
+### Panel Details
+
+**Agents Panel**: Active sessions with last activity time and pending request count.
+
+**Pending Panel**: Requests awaiting approval, sorted by urgency (CRITICAL first).
+
+**Activity Panel**: Real-time feed of approvals, rejections, and executions.
+
+## History & Search
+
+Browse and search the full audit history.
+
+### Full-Text Search
+
+```bash
+# Search commands
+slb history -q "rm -rf"
+
+# Search with filters
+slb history -q "database" --tier critical --status executed
+```
+
+### Filtering
+
+```bash
+# By status
+slb history --status pending|approved|rejected|executed|cancelled
+
+# By tier
+slb history --tier critical|dangerous|caution|safe
+
+# By agent
+slb history --agent "GreenLake"
+
+# By date
+slb history --since 2026-01-01
+slb history --since 2026-01-03T10:00:00Z
+
+# Combined
+slb history --tier critical --status executed --since 2026-01-01 --limit 100
+```
+
+### Detailed View
+
+```bash
+# Show full request details
+slb show <request-id>
+
+# Include all information
+slb show <request-id> --with-reviews --with-execution --with-attachments
+```
+
+## Agent Mail Integration
+
+SLB integrates with MCP Agent Mail for cross-agent notifications.
+
+### Configuration
+
+```toml
+[integrations]
+agent_mail_enabled = true
+agent_mail_thread = "SLB-Reviews"    # Default thread for notifications
+```
+
+### Notification Events
+
+| Event | Thread | Importance |
+|-------|--------|------------|
+| New CRITICAL request | SLB-Reviews | urgent |
+| New DANGEROUS request | SLB-Reviews | normal |
+| Request approved | SLB-Reviews | normal |
+| Request rejected | SLB-Reviews | normal |
+| Request executed | SLB-Reviews | low |
+| Request timeout/escalation | SLB-Reviews | urgent |
+
+### Message Format
+
+New request notification:
+```markdown
+## Command Approval Request
+
+**ID**: abc123
+**Risk**: CRITICAL
+**Command**: `rm -rf /etc`
+
+### Justification
+- Reason: Emergency cleanup
+- Expected: Remove config files
+- Goal: Reset system state
+- Safety: Backed up to S3
+
+---
+To review: `slb review abc123`
+To approve: `slb approve abc123 --session-id <your-session>`
+```
+
+### Manual Notification
+
+Force send notification for a request:
+
+```bash
+slb notify <request-id> --via agent-mail
+```
+
+## Output Formats
+
+All commands support structured output for programmatic use.
+
+### JSON Mode
+
+```bash
+# Global flag
+slb --output json pending
+
+# Per-command
+slb pending --json
+slb history --json
+slb session list --json
+```
+
+### Output Examples
+
+**Pending requests (JSON)**:
+```json
+{
+  "requests": [
+    {
+      "id": "abc123",
+      "status": "pending",
+      "tier": "critical",
+      "command": "rm -rf /etc",
+      "requestor": "GreenLake",
+      "created_at": "2026-01-03T10:00:00Z",
+      "approvals": 0,
+      "required_approvals": 2
+    }
+  ],
+  "count": 1
+}
+```
+
+**Session start (JSON)**:
+```json
+{
+  "session_id": "sess_abc123",
+  "session_key": "key_xyz789",
+  "agent_name": "GreenLake",
+  "program": "claude-code",
+  "model": "opus",
+  "project_path": "/home/user/myproject",
+  "started_at": "2026-01-03T10:00:00Z"
+}
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Invalid arguments |
+| 3 | Request not found |
+| 4 | Permission denied |
+| 5 | Timeout |
+| 6 | Rate limited |
+
 ## Planning & Development
 
 - Design doc: `PLAN_TO_MAKE_SLB.md`
