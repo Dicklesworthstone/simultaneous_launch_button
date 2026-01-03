@@ -21,7 +21,7 @@ Coding agents can get tunnel vision, hallucinate, or misunderstand context. A se
 - **Command Hash Binding**: Approvals bind to the exact command via SHA-256 hash
 - **SQLite Source of Truth**: Project state lives in `.slb/state.db`
 - **Agent Mail Integration**: Notify reviewers and track audit trails via MCP Agent Mail
-- **TUI Dashboard**: Beautiful terminal UI for human reviewers
+- **TUI Dashboard**: Interactive terminal UI for human reviewers
 
 ## Risk Tiers
 
@@ -324,7 +324,7 @@ Use slb as **defense in depth**, not your only protection.
 
 ## Claude Code Hook Integration
 
-For seamless integration with Claude Code, `slb` provides a PreToolUse hook that intercepts Bash commands before execution.
+To integrate with Claude Code, `slb` provides a PreToolUse hook that intercepts Bash commands before execution.
 
 ### Quick Setup
 
@@ -471,7 +471,7 @@ Request must be in APPROVED state.
 Approval TTL must not have elapsed.
 
 ### Gate 3: Command Hash
-SHA-256 hash of the command must match. This ensures the exact approved command is executed—no modifications after approval.
+SHA-256 hash of the command must match. This ensures the exact approved command is executed, with no modifications allowed after approval.
 
 ### Gate 4: Tier Consistency
 Risk tier must still match (patterns may have changed since approval).
@@ -938,7 +938,7 @@ This data enables:
 
 ## TUI Dashboard
 
-The interactive terminal UI provides a comprehensive overview for human reviewers.
+The interactive terminal UI gives human reviewers an at-a-glance view of pending requests and agent activity.
 
 ### Launching
 
