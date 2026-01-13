@@ -33,3 +33,6 @@ slb
 
 # SLB runtime logs
 .slb/
+
+# bv (beads viewer) local config and caches
+.bv/
