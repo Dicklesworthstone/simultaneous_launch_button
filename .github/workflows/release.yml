@@ -59,6 +59,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COSIGN_EXPERIMENTAL: "true"
+          # Token with write access to homebrew-tap and scoop-bucket repos
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -178,7 +180,7 @@ jobs:
           echo "go install github.com/${{ github.repository }}/cmd/slb@v${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Homebrew (coming soon)" >> $GITHUB_STEP_SUMMARY
+          echo "### Homebrew" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "brew install slb" >> $GITHUB_STEP_SUMMARY
+          echo "brew install dicklesworthstone/tap/slb" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
