@@ -11,21 +11,26 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GO_VERSION: "1.24"
+
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Verify go.mod is tidy
@@ -37,7 +42,7 @@ jobs:
         run: |
           gofmt_output=$(gofmt -l .)
           if [ -n "$gofmt_output" ]; then
-            echo "Files not formatted:"
+            echo "::error::Files not formatted with gofmt:"
             echo "$gofmt_output"
             exit 1
           fi
@@ -46,7 +51,7 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
           args: --timeout=5m
@@ -54,11 +59,13 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # Windows excluded - no tmux dependency but test for CLI compatibility
         include:
           - os: windows-latest
             skip-race: true
@@ -68,23 +75,23 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Build
         run: go build -v ./...
 
-      - name: Run tests (with race)
+      - name: Run tests (with race detector)
         if: ${{ !matrix.skip-race }}
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Run tests (without race)
+      - name: Run tests (without race detector)
         if: ${{ matrix.skip-race }}
         run: go test -v -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: coverage.out
           fail_ci_if_error: false
@@ -93,14 +100,17 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [test]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Generate coverage
@@ -112,7 +122,7 @@ jobs:
           echo "Coverage: ${COVERAGE}%"
           THRESHOLD=80
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
-            echo "Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
             exit 1
           fi
           echo "Coverage ${COVERAGE}% meets threshold of ${THRESHOLD}%"
@@ -130,6 +140,9 @@ jobs:
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -152,7 +165,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Build
@@ -177,13 +190,17 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Run govulncheck
@@ -192,7 +209,7 @@ jobs:
           govulncheck ./...
 
       - name: Run gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.22.1
         with:
           args: -fmt sarif -out gosec-results.sarif ./...
 
@@ -205,6 +222,9 @@ jobs:
   goreleaser-check:
     name: GoReleaser Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -213,7 +233,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Check GoReleaser config
@@ -233,7 +253,11 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -246,7 +270,10 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [build]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -268,13 +295,14 @@ jobs:
       - name: Test invalid command
         run: |
           if ./build/slb-linux-amd64 invalid-command 2>/dev/null; then
-            echo "Expected failure for invalid command"
+            echo "::error::Expected failure for invalid command"
             exit 1
           fi
 
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [lint, test, coverage, build, security, goreleaser-check, integration]
     if: always()
     steps:
@@ -287,7 +315,7 @@ jobs:
              [[ "${{ needs.security.result }}" != "success" ]] ||
              [[ "${{ needs.goreleaser-check.result }}" != "success" ]] ||
              [[ "${{ needs.integration.result }}" != "success" ]]; then
-            echo "One or more jobs failed"
+            echo "::error::One or more jobs failed"
             exit 1
           fi
           echo "All CI jobs passed successfully!"

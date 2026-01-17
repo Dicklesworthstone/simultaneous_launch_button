@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+env:
+  GO_VERSION: "1.24"
+
 permissions:
   contents: write
   packages: write
@@ -14,6 +17,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -24,7 +28,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Set up QEMU
@@ -59,7 +63,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COSIGN_EXPERIMENTAL: "true"
-          # Token with write access to homebrew-tap and scoop-bucket repos
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       - name: Upload artifacts
@@ -72,7 +75,11 @@ jobs:
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [release]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -115,7 +122,7 @@ jobs:
 
       - name: Build and push
         if: steps.dockerfile.outputs.exists == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -124,6 +131,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
       - name: Skip Docker
         if: steps.dockerfile.outputs.exists == 'false'
@@ -132,7 +141,10 @@ jobs:
   verify:
     name: Verify Release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [release]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -161,7 +173,10 @@ jobs:
   announce:
     name: Announce Release
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [release, verify]
+    permissions:
+      contents: read
     steps:
       - name: Create release summary
         run: |
