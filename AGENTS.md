@@ -122,9 +122,9 @@ Product bus:
 - Create/ensure product: `mcp-agent-mail products ensure MyProduct --name "My Product"`.
 - Link repo: `mcp-agent-mail products link MyProduct .`.
 - Inspect: `mcp-agent-mail products status MyProduct`.
-- Search: `mcp-agent-mail products search MyProduct "bd-123 OR \"release plan\"" --limit 50`.
+- Search: `mcp-agent-mail products search MyProduct "br-123 OR \"release plan\"" --limit 50`.
 - Product inbox: `mcp-agent-mail products inbox MyProduct YourAgent --limit 50 --urgent-only --include-bodies`.
-- Summaries: `mcp-agent-mail products summarize-thread MyProduct "bd-123" --per-thread-limit 100 --no-llm`.
+- Summaries: `mcp-agent-mail products summarize-thread MyProduct "br-123" --per-thread-limit 100 --no-llm`.
 
 Server-side tools (for orchestrators) include:
 
@@ -141,41 +141,54 @@ Common pitfalls:
 
 ---
 
-## Issue Tracking with bd (beads)
+## Issue Tracking with br (beads_rust)
 
-All issue tracking goes through **bd**. No other TODO systems.
+All issue tracking goes through **br**. No other TODO systems.
+
+**Note:** `br` is non-invasive and never executes git commands. You must manually add, commit, and push `.beads/` changes.
+
+**SQLite/WAL Caution:** br uses SQLite with WAL mode. Always run `br sync --flush-only` before git operations to ensure `.beads/` files are consistent.
 
 Key invariants:
 
 - `.beads/` is authoritative state and **must always be committed** with code changes.
-- Do not edit `.beads/*.jsonl` directly; only via `bd`.
+- Do not edit `.beads/*.jsonl` directly; only via `br`.
 
 ### Basics
 
 Check ready work:
 
 ```bash
-bd ready --json
+br ready --json
 ```
 
 Create issues:
 
 ```bash
-bd create "Issue title" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
+br create "Issue title" -t bug|feature|task -p 0-4 --json
+br create "Issue title" -p 1 --deps discovered-from:br-123 --json
 ```
 
 Update:
 
 ```bash
-bd update bd-42 --status in_progress --json
-bd update bd-42 --priority 1 --json
+br update br-42 --status in_progress --json
+br update br-42 --priority 1 --json
 ```
 
 Complete:
 
 ```bash
-bd close bd-42 --reason "Completed" --json
+br close br-42 --reason "Completed" --json
+```
+
+Sync workflow:
+
+```bash
+br sync --flush-only
+git add .beads/
+git commit -m "Sync beads"
+git push
 ```
 
 Types:
@@ -192,17 +205,17 @@ Priorities:
 
 Agent workflow:
 
-1. `bd ready` to find unblocked work.
-2. Claim: `bd update <id> --status in_progress`.
+1. `br ready` to find unblocked work.
+2. Claim: `br update <id> --status in_progress`.
 3. Implement + test.
 4. If you discover new work, create a new bead with `discovered-from:<parent-id>`.
 5. Close when done.
 6. Commit `.beads/` in the same commit as code changes.
 
-Auto-sync:
+Sync:
 
-- bd exports to `.beads/issues.jsonl` after changes (debounced).
-- It imports from JSONL when newer (e.g. after `git pull`).
+- Run `br sync --flush-only` to export to `.beads/issues.jsonl`.
+- Then manually `git add .beads/ && git commit && git push`.
 
 Never:
 
@@ -499,7 +512,9 @@ Remove any mention of contributing/contributors from README and don't reinsert i
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
+   br sync --flush-only
+   git add .beads/
+   git commit -m "Sync beads"
    git push
    git status  # MUST show "up to date with origin"
    ```
